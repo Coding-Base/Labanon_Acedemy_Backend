@@ -1,0 +1,53 @@
+{% extends "admin/index.html" %}
+{% load i18n %}
+
+{% block content_title %}
+  <h1>{{ site_header }}</h1>
+{% endblock %}
+
+{% block content %}
+<div id="content-main">
+  {% if app_list %}
+    {% for app in app_list %}
+      <div class="app-cbt" style="margin-bottom: 30px;">
+        <h2><a href="{{ app.app_url }}">{{ app.name }}</a></h2>
+        {% if app.models %}
+          <table>
+            <tbody>
+              {% for model in app.models %}
+                <tr>
+                  <th scope="row">
+                    <a href="{{ model.admin_url }}">{{ model.name }}</a>
+                  </th>
+                  <td>
+                    {% if model.add_url %}
+                      <a href="{{ model.add_url }}" class="addlink">{% trans 'Add' %}</a>
+                    {% endif %}
+                    {% if model.change_url %}
+                      <a href="{{ model.change_url }}" class="changelink">{% trans 'Change' %}</a>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% endfor %}
+              
+              {# Add bulk upload link for CBT app #}
+              {% if app.app_label == 'cbt' %}
+              <tr style="border-top: 2px solid #ddd; padding-top: 10px;">
+                <th scope="row">
+                  <a href="/admin/cbt/bulk-upload/" style="color: #417690; font-weight: bold;">
+                    📤 Bulk Upload Questions
+                  </a>
+                </th>
+                <td>
+                  <span style="color: #999;">Upload multiple questions at once from JSON</span>
+                </td>
+              </tr>
+              {% endif %}
+            </tbody>
+          </table>
+        {% endif %}
+      </div>
+    {% endfor %}
+  {% endif %}
+</div>
+{% endblock %}

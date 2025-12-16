@@ -1,0 +1,251 @@
+{% extends "admin/base_site.html" %}
+{% load static %}
+
+{% block title %}Bulk Upload Questions - Admin{% endblock %}
+
+{% block extrahead %}
+<style>
+    .bulk-upload-container {
+        max-width: 1000px;
+        margin: 20px auto;
+        background: white;
+        padding: 30px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .bulk-upload-container h1 {
+        color: #333;
+        margin-bottom: 30px;
+        font-size: 24px;
+        border-bottom: 2px solid #417690;
+        padding-bottom: 15px;
+    }
+    
+    .form-group {
+        margin-bottom: 25px;
+    }
+    
+    .form-group label {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: 600;
+        color: #333;
+        font-size: 14px;
+    }
+    
+    .form-group select,
+    .form-group textarea {
+        width: 100%;
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        font-size: 14px;
+        font-family: 'Courier New', monospace;
+    }
+    
+    .form-group select {
+        background-color: white;
+        cursor: pointer;
+    }
+    
+    .form-group select:focus,
+    .form-group textarea:focus {
+        outline: none;
+        border-color: #417690;
+        box-shadow: 0 0 5px rgba(65, 118, 144, 0.3);
+    }
+    
+    .form-group textarea {
+        min-height: 400px;
+        resize: vertical;
+    }
+    
+    .json-example {
+        background: #f5f5f5;
+        border-left: 4px solid #417690;
+        padding: 15px;
+        margin-top: 10px;
+        border-radius: 4px;
+        font-size: 12px;
+        color: #555;
+        overflow-x: auto;
+    }
+    
+    .json-example code {
+        font-family: 'Courier New', monospace;
+    }
+    
+    .button-group {
+        display: flex;
+        gap: 10px;
+        margin-top: 30px;
+    }
+    
+    .button-group button,
+    .button-group a {
+        padding: 10px 20px;
+        border: none;
+        border-radius: 4px;
+        font-size: 14px;
+        cursor: pointer;
+        text-decoration: none;
+        display: inline-block;
+        font-weight: 600;
+        transition: all 0.3s ease;
+    }
+    
+    .btn-submit {
+        background-color: #417690;
+        color: white;
+    }
+    
+    .btn-submit:hover {
+        background-color: #2d526b;
+    }
+    
+    .btn-cancel {
+        background-color: #e9ecef;
+        color: #333;
+    }
+    
+    .btn-cancel:hover {
+        background-color: #dee2e6;
+    }
+    
+    .help-text {
+        font-size: 12px;
+        color: #666;
+        margin-top: 8px;
+        line-height: 1.4;
+    }
+    
+    .required {
+        color: red;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="bulk-upload-container">
+    <h1>📤 Bulk Upload Questions</h1>
+    
+    <form method="post">
+        {% csrf_token %}
+        
+        <div class="form-group">
+            <label for="id_exam">
+                Select Exam <span class="required">*</span>
+            </label>
+            {{ form.exam }}
+            <div class="help-text">Choose the exam (e.g., JAMB, NECO, WAEC)</div>
+        </div>
+        
+        <div class="form-group">
+            <label for="id_subject">
+                Select Subject <span class="required">*</span>
+            </label>
+            {{ form.subject }}
+            <div class="help-text">Choose the subject for the questions. Only subjects matching the selected exam will be shown.</div>
+        </div>
+        
+        <div class="form-group">
+            <label for="id_json_data">
+                Questions JSON Data <span class="required">*</span>
+            </label>
+            {{ form.json_data }}
+            <div class="json-example">
+                <strong>Example JSON Format:</strong>
+                <code>
+[
+  {
+    "question_text": "Which element has atomic number 6?",
+    "options": {
+      "A": "Carbon",
+      "B": "Nitrogen",
+      "C": "Oxygen",
+      "D": "Boron"
+    },
+    "correct_answer": "A",
+    "explanation": "Carbon is the element with atomic number 6",
+    "subject": "Chemistry"
+  },
+  {
+    "question_text": "What is 2 + 2?",
+    "options": {
+      "A": "3",
+      "B": "4",
+      "C": "5",
+      "D": "6"
+    },
+    "correct_answer": "B",
+    "explanation": "2 plus 2 equals 4",
+    "subject": "Mathematics"
+  }
+]
+                </code>
+            </div>
+            <div class="help-text">
+                ✓ Paste a JSON array of question objects<br>
+                ✓ Each object needs: question_text, options (A/B/C/D), correct_answer, explanation, subject<br>
+                ✓ Options should be an object with single-letter keys (A, B, C, D)<br>
+                ✓ correct_answer should match one of the option keys (A, B, C, or D)
+            </div>
+        </div>
+        
+        <div class="button-group">
+            <button type="submit" class="btn-submit">✓ Upload Questions</button>
+            <a href="{% url 'admin:cbt_question_changelist' %}" class="btn-cancel">Cancel</a>
+        </div>
+    </form>
+</div>
+
+{% if messages %}
+<div style="margin: 20px auto; max-width: 1000px;">
+    {% for message in messages %}
+        <div class="messagelist {% if message.level_tag %}{{ message.level_tag }}{% endif %}" 
+             style="padding: 12px 15px; margin-bottom: 10px; border-radius: 4px; white-space: pre-line;
+                    {% if message.level_tag == 'success' %}background-color: #dff0d8; border: 1px solid #d0e8c6; color: #3c763d;
+                    {% elif message.level_tag == 'error' %}background-color: #f2dede; border: 1px solid #e4b5b5; color: #a94442;
+                    {% elif message.level_tag == 'warning' %}background-color: #fcf8e3; border: 1px solid #f0e1a4; color: #8a6d3b;{% endif %}">
+            {{ message }}
+        </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<script>
+// Auto-filter subjects based on selected exam
+document.getElementById('id_exam').addEventListener('change', function() {
+    const examId = this.value;
+    const subjectSelect = document.getElementById('id_subject');
+    
+    // Disable subject select while loading
+    subjectSelect.disabled = true;
+    
+    if (!examId) {
+        subjectSelect.disabled = false;
+        return;
+    }
+    
+    // Fetch subjects for the selected exam
+    fetch(`/admin/api/subjects/?exam=${examId}`)
+        .then(response => response.json())
+        .then(data => {
+            subjectSelect.innerHTML = '<option value="">---------</option>';
+            data.forEach(subject => {
+                const option = document.createElement('option');
+                option.value = subject.id;
+                option.textContent = subject.name;
+                subjectSelect.appendChild(option);
+            });
+            subjectSelect.disabled = false;
+        })
+        .catch(error => {
+            console.error('Error loading subjects:', error);
+            subjectSelect.disabled = false;
+        });
+});
+</script>
+
+{% endblock %}
