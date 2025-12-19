@@ -10,8 +10,8 @@ load_dotenv(BASE_DIR / '.env')
 
 # Minimal settings for local development
 SECRET_KEY = os.environ.get('DJ_SECRET', 'change-me-for-prod')
-DEBUG = True
-ALLOWED_HOSTS = ['*']
+DEBUG = os.environ.get('DJ_DEBUG', 'True').lower() in ('1', 'true', 'yes')
+ALLOWED_HOSTS = ['*'] if DEBUG else os.environ.get('DJ_ALLOWED_HOSTS', '').split(',')
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -23,12 +23,16 @@ INSTALLED_APPS = [
     'corsheaders',
     'rest_framework',
     'djoser',
-    'cloudinary',
-    'cloudinary_storage',
+    # cloudinary apps are optional and used only when USE_CLOUDINARY=True
+    'cloudinary' if os.environ.get('USE_CLOUDINARY', 'False').lower() in ('1', 'true', 'yes') else None,
+    'cloudinary_storage' if os.environ.get('USE_CLOUDINARY', 'False').lower() in ('1', 'true', 'yes') else None,
     'users',
     'courses',
     'cbt',
 ]
+
+# filter out None if cloudinary not used
+INSTALLED_APPS = [a for a in INSTALLED_APPS if a]
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
@@ -76,10 +80,21 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = '/static/'
-MEDIA_URL = '/media/'
 
-# Cloudinary storage (use CLOUDINARY_URL env variable)
-DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
+# Media settings
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.environ.get('MEDIA_ROOT', str(BASE_DIR / 'media'))
+
+# Site base (used to build absolute URLs when request context is missing)
+SITE_URL = os.environ.get('SITE_URL', 'http://localhost:8000').rstrip('/')
+
+# Storage backend toggled by environment variable USE_CLOUDINARY
+USE_CLOUDINARY = os.environ.get('USE_CLOUDINARY', 'False').lower() in ('1', 'true', 'yes')
+if USE_CLOUDINARY:
+    DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
+else:
+    # local filesystem for development
+    DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
 
 # CORS for frontend dev server (Vite default port 5173)
 CORS_ALLOW_ALL_ORIGINS = False
@@ -109,8 +124,6 @@ DJOSER = {
     'USER_ID_FIELD': 'id',
     'LOGIN_FIELD': 'username',
     # For development convenience we disable required activation so users can login
-    # immediately. In production you should enable activation (set to True) and
-    # configure a real email backend.
     'SEND_ACTIVATION_EMAIL': False,
     'ACTIVATION_URL': 'activate/{uid}/{token}',
     'PASSWORD_RESET_CONFIRM_URL': 'password/reset/confirm/{uid}/{token}',
@@ -122,7 +135,7 @@ DJOSER = {
 # Platform commission percentage (e.g., 0.05 = 5%)
 PLATFORM_COMMISSION = float(os.environ.get('PLATFORM_COMMISSION', 0.05))
 
-# Admin invite code (optional) - read from environment so serializers can validate admin registration
+# Admin invite code (optional)
 ADMIN_INVITE_CODE = os.environ.get('ADMIN_INVITE_CODE')
 
 AUTH_USER_MODEL = 'users.User'

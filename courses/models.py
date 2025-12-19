@@ -20,6 +20,12 @@ class Course(models.Model):
     image = models.CharField(max_length=512, blank=True)
     description = models.TextField(blank=True)
     price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    # scheduled course support
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
+    meeting_time = models.TimeField(null=True, blank=True)
+    meeting_place = models.CharField(max_length=100, blank=True)
+    meeting_link = models.CharField(max_length=512, blank=True)
     published = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 

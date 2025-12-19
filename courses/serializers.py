@@ -1,4 +1,8 @@
+# backend/courses/serializers.py
 from rest_framework import serializers
+from django.conf import settings
+import re
+
 from .models import Institution, Course, Module, Lesson, Enrollment, Payment, CartItem
 
 
@@ -35,22 +39,65 @@ class CourseSerializer(serializers.ModelSerializer):
         model = Course
         fields = ['id', 'title', 'slug', 'image', 'description', 'price', 'published', 'creator', 'modules']
 
-    def get_image(self, obj):
-        raw = obj.image or ''
+    def _normalize_path(self, raw: str) -> str:
+        """
+        Normalize the stored image path so we don't end up with duplicate
+        '/media/media/...' or missing leading slash issues.
+        Returns a path that starts with a single '/media/' followed by the relative path.
+        """
         if not raw:
             return ''
-        # if already absolute, return as-is
+
+        raw = raw.strip()
+
+        # If it's a full URL, return as-is later (caller checks)
         if raw.startswith('http://') or raw.startswith('https://'):
             return raw
+
+        # If the stored value contains the SITE_URL, remove it so we only have the path
+        site = getattr(settings, 'SITE_URL', '').rstrip('/')
+        if site and raw.startswith(site):
+            raw = raw[len(site):]
+
+        # Collapse repeated "/media/" segments (e.g. "/media/media/courses/.." -> "/media/courses/..")
+        # Also handle raw that may be like "media/courses/..."
+        # Ensure it starts with a single leading slash.
+        # We'll use regex to collapse repeated /media/ occurrences.
+        raw = re.sub(r'(^/+)', '/', raw)  # ensure single leading slash
+        # replace repeated 'media' segments like /media/media/... -> /media/...
+        raw = re.sub(r'(\/media\/)+', '/media/', raw)
+
+        # If after normalization it doesn't start with /media/, ensure media prefix exists
+        media_prefix = settings.MEDIA_URL.rstrip('/')  # normally '/media'
+        if not raw.startswith(media_prefix):
+            # strip leading slashes and prefix MEDIA_URL
+            raw = f"{media_prefix}/{raw.lstrip('/')}"
+        return raw
+
+    def get_image(self, obj):
+        raw = (obj.image or '').strip()
+        if not raw:
+            return ''
+
+        # If already absolute URL, return as-is
+        if raw.startswith('http://') or raw.startswith('https://'):
+            return raw
+
+        # Normalize raw path to a single path starting with /media/...
+        normalized = self._normalize_path(raw)
 
         request = self.context.get('request')
         # if serializer has request context, build absolute uri
         if request is not None:
-            # if raw already begins with '/', build_absolute_uri will join domain + path
-            return request.build_absolute_uri(raw if raw.startswith('/') else f'/{raw}')
+            # request.build_absolute_uri expects a path (leading slash ok)
+            return request.build_absolute_uri(normalized)
 
-        # fallback: return raw (frontend will try to resolve)
-        return raw
+        # fallback: build with SITE_URL (ensure no double slashes)
+        site = getattr(settings, 'SITE_URL', '').rstrip('/')
+        if site:
+            return f"{site}{normalized}"
+        # as a last fallback return normalized path (frontend should resolve)
+        return normalized
 
 
 class EnrollmentSerializer(serializers.ModelSerializer):

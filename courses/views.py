@@ -19,7 +19,7 @@ from django.conf import settings
 from django.utils.text import slugify
 import random
 import string
-
+import os
 
 class StandardResultsSetPagination(PageNumberPagination):
     page_size = 10
@@ -38,17 +38,14 @@ class CourseViewSet(viewsets.ModelViewSet):
     ordering_fields = ['created_at', 'price', 'title']
 
     def perform_create(self, serializer):
-        # assign the creator automatically and generate a unique slug from title
         title = serializer.validated_data.get('title', '')
         base_slug = slugify(title) or 'course'
         slug = base_slug
-        # ensure uniqueness
         i = 0
         while Course.objects.filter(slug=slug).exists():
             i += 1
             suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=4))
             slug = f"{base_slug}-{suffix}"
-
         serializer.save(creator=self.request.user, slug=slug)
 
 
@@ -58,10 +55,8 @@ class ModuleViewSet(viewsets.ModelViewSet):
     permission_classes = [IsCreatorOrTeacherOrAdmin]
 
     def perform_create(self, serializer):
-        # ensure the creator owns the course or is staff
         course = serializer.validated_data.get('course')
         if course and course.creator != self.request.user and not self.request.user.is_staff:
-            # prevent creating modules for courses the user doesn't own
             raise permissions.PermissionDenied('You do not own this course')
         serializer.save()
 
@@ -83,17 +78,24 @@ class LessonMediaUploadView(APIView):
     parser_classes = [MultiPartParser, FormParser]
 
     def post(self, request, format=None):
-        # expecting a 'file' form field
         upload = request.FILES.get('file')
         if not upload:
             return JsonResponse({'detail': 'No file provided'}, status=400)
 
-        # create unique filename
         ext = upload.name.split('.')[-1]
         name = f"lessons/{uuid.uuid4().hex}.{ext}"
-
         saved_name = default_storage.save(name, upload)
-        url = default_storage.url(saved_name)
+
+        # default_storage.url may return absolute url (cloudinary) or relative path (filesystem)
+        try:
+            url = default_storage.url(saved_name)
+        except Exception:
+            url = f"{getattr(settings, 'SITE_URL', '').rstrip('/')}{getattr(settings, 'MEDIA_URL', '/media/')}{saved_name}"
+
+        # If url is relative (starts with '/'), ensure absolute by prefixing SITE_URL
+        if url.startswith('/') and getattr(settings, 'SITE_URL', None):
+            url = f"{settings.SITE_URL.rstrip('/')}{url}"
+
         return JsonResponse({'name': saved_name, 'url': url})
 
 
@@ -109,7 +111,27 @@ class CourseImageUploadView(APIView):
         ext = upload.name.split('.')[-1]
         name = f"courses/{uuid.uuid4().hex}.{ext}"
         saved_name = default_storage.save(name, upload)
-        url = default_storage.url(saved_name)
+
+        try:
+            url = default_storage.url(saved_name)
+        except Exception:
+            url = f"{getattr(settings, 'SITE_URL', '').rstrip('/')}{getattr(settings, 'MEDIA_URL', '/media/')}{saved_name}"
+
+        # If url is relative (starts with '/'), ensure absolute by prefixing SITE_URL
+        if url.startswith('/') and getattr(settings, 'SITE_URL', None):
+            url = f"{settings.SITE_URL.rstrip('/')}{url}"
+
+        # optionally attach image to a course if course_id passed
+        course_id = request.data.get('course_id') or request.POST.get('course_id')
+        if course_id:
+            try:
+                course = Course.objects.get(pk=course_id)
+                # store absolute url so frontend gets a working link regardless of storage
+                course.image = url
+                course.save()
+            except Course.DoesNotExist:
+                pass
+
         return JsonResponse({'name': saved_name, 'url': url})
 
 
@@ -132,7 +154,6 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
         return Enrollment.objects.filter(user=self.request.user)
 
     def perform_create(self, serializer):
-        # When creating an enrollment, if the course is free, mark as purchased immediately
         course = serializer.validated_data.get('course')
         user = self.request.user
         enrollment = serializer.save(user=user)
@@ -140,7 +161,6 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
             enrollment.purchased = True
             enrollment.purchased_at = timezone.now()
             enrollment.save()
-            # create a successful Payment record for bookkeeping
             Payment.objects.create(
                 user=user,
                 course=course,
@@ -152,11 +172,6 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def purchase(self, request, pk=None):
-        """Initiate a purchase for an enrollment. This is a stub for real payment integration.
-
-        Creates a Payment object with status pending and returns a fake payment_url.
-        Real integration with Paystack will replace this.
-        """
         enrollment = self.get_object()
         if enrollment.purchased:
             return Response({'detail': 'Already purchased'}, status=status.HTTP_400_BAD_REQUEST)
@@ -164,7 +179,6 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
         course = enrollment.course
         amount = float(course.price)
 
-        # If course is free, mark enrollment purchased immediately
         if amount == 0:
             enrollment.purchased = True
             enrollment.purchased_at = timezone.now()
@@ -179,7 +193,6 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
             )
             return Response({'detail': 'Enrollment completed (free course)'} , status=status.HTTP_200_OK)
 
-        # calculate platform fee from settings
         commission = getattr(settings, 'PLATFORM_COMMISSION', 0.05)
         platform_fee = float(amount) * float(commission)
 
@@ -192,15 +205,12 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
             kind=Payment.KIND_COURSE,
         )
 
-        # In a real implementation we would create a Paystack transaction and return the payment link.
         fake_payment_url = f"https://pay.example.com/checkout/{payment.id}"
-
         serializer = PaymentSerializer(payment)
         return Response({'payment': serializer.data, 'payment_url': fake_payment_url})
 
 
 class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
-    """Allow users to view their own payments (paginated)."""
     queryset = Payment.objects.all().order_by('-created_at')
     serializer_class = PaymentSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -211,7 +221,6 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
 
 
 class CartItemViewSet(viewsets.ModelViewSet):
-    """Manage cart items for the authenticated user."""
     queryset = CartItem.objects.all().order_by('-added_at')
     serializer_class = CartItemSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -221,18 +230,15 @@ class CartItemViewSet(viewsets.ModelViewSet):
         return CartItem.objects.filter(user=self.request.user).order_by('-added_at')
 
     def perform_create(self, serializer):
-        # attach current user
         serializer.save(user=self.request.user)
 
     @action(detail=True, methods=['post'])
     def checkout(self, request, pk=None):
-        """Checkout a single cart item: creates a Payment and returns a payment_url (stub)."""
         cart_item = self.get_object()
         course = cart_item.course
         amount = float(course.price)
 
         if amount == 0:
-            # create enrollment and mark purchased immediately
             enrollment, _ = Enrollment.objects.get_or_create(user=request.user, course=course)
             enrollment.purchased = True
             enrollment.purchased_at = timezone.now()
@@ -245,13 +251,11 @@ class CartItemViewSet(viewsets.ModelViewSet):
                 kind=Payment.KIND_COURSE,
                 status=Payment.SUCCESS,
             )
-            # remove cart item
             cart_item.delete()
             return Response({'detail': 'Enrolled (free course)'} , status=status.HTTP_200_OK)
 
         commission = getattr(settings, 'PLATFORM_COMMISSION', 0.05)
         platform_fee = float(amount) * float(commission)
-
         payment = Payment.objects.create(
             user=request.user,
             course=course,
@@ -262,13 +266,11 @@ class CartItemViewSet(viewsets.ModelViewSet):
         )
 
         fake_payment_url = f"https://pay.example.com/checkout/{payment.id}"
-
         serializer = PaymentSerializer(payment)
         return Response({'payment': serializer.data, 'payment_url': fake_payment_url})
 
     @action(detail=False, methods=['post'])
     def checkout_all(self, request):
-        """Checkout all cart items for the user. Returns list of payment links or completes free enrollments."""
         items = self.get_queryset()
         payments = []
         for item in items:
