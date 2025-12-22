@@ -29,6 +29,7 @@ INSTALLED_APPS = [
     'users',
     'courses',
     'cbt',
+    'videos',
 ]
 
 # filter out None if cloudinary not used
@@ -139,3 +140,33 @@ PLATFORM_COMMISSION = float(os.environ.get('PLATFORM_COMMISSION', 0.05))
 ADMIN_INVITE_CODE = os.environ.get('ADMIN_INVITE_CODE')
 
 AUTH_USER_MODEL = 'users.User'
+
+# ==================== AWS S3 + CloudFront Configuration ====================
+USE_AWS_S3 = os.environ.get('USE_AWS_S3', 'False').lower() in ('1', 'true', 'yes')
+
+if USE_AWS_S3:
+    # AWS S3 Credentials
+    AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
+    AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY')
+    AWS_S3_REGION_NAME = os.environ.get('AWS_S3_REGION_NAME', 'us-east-1')
+    AWS_STORAGE_BUCKET_NAME = os.environ.get('AWS_STORAGE_BUCKET_NAME')
+    
+    # CloudFront Configuration
+    CLOUDFRONT_DOMAIN = os.environ.get('CLOUDFRONT_DOMAIN')  # e.g., d123456abcdef.cloudfront.net
+    CLOUDFRONT_DISTRIBUTION_ID = os.environ.get('CLOUDFRONT_DISTRIBUTION_ID')
+    
+    # S3 Storage Settings
+    AWS_S3_CUSTOM_DOMAIN = f"{CLOUDFRONT_DOMAIN}"
+    AWS_LOCATION = 'media'
+    
+    # Use CloudFront URLs for all media files
+    MEDIA_URL = f"https://{CLOUDFRONT_DOMAIN}/{AWS_LOCATION}/"
+    
+    # Default storage backend for file uploads
+    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+else:
+    # Fallback to local filesystem
+    DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
+    CLOUDFRONT_DOMAIN = None
+    CLOUDFRONT_DISTRIBUTION_ID = None
+

@@ -14,6 +14,7 @@ urlpatterns = [
     path('api/dashboard/', DashboardView.as_view(), name='dashboard'),
     path('api/', include('courses.urls')),
     path('api/cbt/', include('cbt.urls')),
+    path('api/videos/', include('videos.urls')),
     path('api/auth/', include('djoser.urls')),
     path('api/auth/', include('djoser.urls.jwt')),
 ]

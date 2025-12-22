@@ -50,6 +50,16 @@ class Lesson(models.Model):
     title = models.CharField(max_length=255)
     content = models.TextField(blank=True)
     video = models.CharField(max_length=512, blank=True)  # store Cloudinary public id or remote URL
+    # S3 video reference (optional - can use either video field or video_s3)
+    video_s3 = models.ForeignKey(
+        'videos.Video', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        related_name='lessons'
+    )
+    # YouTube embed URL (optional)
+    youtube_url = models.URLField(blank=True, null=True)
     order = models.PositiveIntegerField(default=0)
 
     class Meta:

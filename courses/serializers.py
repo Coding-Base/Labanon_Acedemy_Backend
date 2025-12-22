@@ -14,10 +14,18 @@ class InstitutionSerializer(serializers.ModelSerializer):
 
 class LessonSerializer(serializers.ModelSerializer):
     module = serializers.PrimaryKeyRelatedField(queryset=Module.objects.all(), required=False)
+    video_s3_url = serializers.SerializerMethodField(read_only=True)
+    video_s3_status = serializers.CharField(source='video_s3.status', read_only=True, allow_null=True)
 
     class Meta:
         model = Lesson
-        fields = ['id', 'module', 'title', 'content', 'video', 'order']
+        fields = ['id', 'module', 'title', 'content', 'video', 'video_s3', 'video_s3_url', 'video_s3_status', 'youtube_url', 'order']
+    
+    def get_video_s3_url(self, obj):
+        """Return CloudFront URL if video_s3 exists and is ready."""
+        if obj.video_s3 and obj.video_s3.status == 'ready':
+            return obj.video_s3.cloudfront_url
+        return None
 
 
 class ModuleSerializer(serializers.ModelSerializer):
