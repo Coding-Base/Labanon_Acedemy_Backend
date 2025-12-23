@@ -1,7 +1,7 @@
 from rest_framework import viewsets, status
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.conf import settings
 from django.utils import timezone
 import boto3
@@ -90,7 +90,7 @@ class S3Manager:
     
     def generate_hls_manifest_url(self, video_id: str) -> str:
         """Generate CloudFront URL for HLS manifest."""
-        manifest_key = f"videos/{video_id}/hls/manifest.m3u8"
+        manifest_key = f"videos/{video_id}/hls/master.m3u8"
         return f"https://{self.cloudfront_domain}/{manifest_key}"
     
     def generate_thumbnail_url(self, video_id: str) -> str:
@@ -292,7 +292,7 @@ class VideoViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
     
-    @action(detail='id', methods=['get'])
+    @action(detail=True, methods=['get'])
     def conversion_status(self, request, id=None):
         """Get conversion task status for a video."""
         try:
@@ -309,49 +309,6 @@ class VideoViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND
             )
     
-    @action(detail='id', methods=['post'])
-    def update_encoding_status(self, request, id=None):
-        """
-        Update video encoding status (called by EncodingBackend service)
-        
-        Request:
-            {
-                'status': 'ready' | 'failed',
-                'error_message': '...' (optional, only if failed)
-            }
-        """
-        try:
-            video = Video.objects.get(id=id)
-            
-            new_status = request.data.get('status', 'ready')
-            error_message = request.data.get('error_message', '')
-            
-            # Update video status
-            video.status = new_status
-            if error_message:
-                video.error_message = error_message
-            video.save()
-            
-            logger.info(f"Video {id} encoding status updated to {new_status}")
-            
-            return Response({
-                'message': f'Video status updated to {new_status}',
-                'video_id': str(video.id),
-                'status': video.status
-            })
-        
-        except Video.DoesNotExist:
-            return Response(
-                {'error': 'Video not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        except Exception as e:
-            logger.error(f"Error updating video status: {str(e)}")
-            return Response(
-                {'error': str(e)},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-    
     def retrieve(self, request, *args, **kwargs):
         """Get video details."""
         response = super().retrieve(request, *args, **kwargs)
@@ -361,3 +318,80 @@ class VideoViewSet(viewsets.ModelViewSet):
         """List user's videos."""
         response = super().list(request, *args, **kwargs)
         return response
+
+
+# Standalone view for worker to update video encoding status (no auth required)
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def update_video_encoding_status(request, video_id):
+    """
+    Update video encoding status (called by EncodingBackend worker service).
+    This endpoint is public to allow the worker to notify without authentication.
+    
+    Request body:
+    {
+        'status': 'ready' | 'failed',
+        'error_message': '...' (optional)
+    }
+    """
+    try:
+        video = Video.objects.get(id=video_id)
+        
+        new_status = request.data.get('status', 'ready')
+        error_message = request.data.get('error_message', '')
+        
+        # Update video status
+        video.status = new_status
+        if error_message:
+            video.error_message = error_message
+        
+        # If status is 'ready', generate and set the CloudFront HLS URL
+        if new_status == 'ready':
+            try:
+                s3_manager = S3Manager()
+                video.cloudfront_url = s3_manager.generate_hls_manifest_url(str(video.id))
+                # Also generate thumbnail URL
+                video.cloudfront_thumbnail_url = s3_manager.generate_thumbnail_url(str(video.id))
+                logger.info(f"✓ Generated CloudFront URL: {video.cloudfront_url}")
+            except Exception as e:
+                logger.warning(f"⚠ Could not generate CloudFront URL via S3Manager: {str(e)}")
+                # Fallback: if CLOUDFRONT_DOMAIN is configured in settings, build URL directly
+                try:
+                    cf_domain = getattr(settings, 'CLOUDFRONT_DOMAIN', None)
+                    if cf_domain:
+                        video.cloudfront_url = f"https://{cf_domain}/videos/{video.id}/hls/master.m3u8"
+                        video.cloudfront_thumbnail_url = f"https://{cf_domain}/videos/{video.id}/thumbnail.jpg"
+                        logger.info(f"✓ Fallback CloudFront URL set: {video.cloudfront_url}")
+                except Exception as e2:
+                    logger.warning(f"⚠ Fallback CloudFront URL generation failed: {str(e2)}")
+        # Ensure cloudfront_url is set if possible (additional safety)
+        if new_status == 'ready' and not video.cloudfront_url:
+            cf = getattr(settings, 'CLOUDFRONT_DOMAIN', None)
+            if cf:
+                video.cloudfront_url = f"https://{cf}/videos/{video.id}/hls/master.m3u8"
+                video.cloudfront_thumbnail_url = f"https://{cf}/videos/{video.id}/thumbnail.jpg"
+                logger.info(f"✓ Ensured CloudFront URL: {video.cloudfront_url}")
+
+        video.save()
+        
+        logger.info(f"✓ Video {video_id} encoding status updated to {new_status}")
+        
+        return Response({
+            'message': f'Video status updated to {new_status}',
+            'video_id': str(video.id),
+            'status': video.status,
+            'cloudfront_url': video.cloudfront_url
+        }, status=status.HTTP_200_OK)
+    
+    except Video.DoesNotExist:
+        logger.warning(f"Video {video_id} not found")
+        return Response(
+            {'error': 'Video not found'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    except Exception as e:
+        logger.error(f"Error updating video status: {str(e)}")
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_400_BAD_REQUEST
+        )

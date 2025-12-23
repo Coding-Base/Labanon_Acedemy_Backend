@@ -31,9 +31,20 @@ class IsCreatorOrTeacherOrAdmin(permissions.BasePermission):
             return True
         # Creator can modify
         try:
+            # Direct creator field (Course)
             creator = getattr(obj, 'creator', None)
             if creator and creator == request.user:
                 return True
+            # If object has a course attribute (Module), check ownership
+            course = getattr(obj, 'course', None)
+            if course and getattr(course, 'creator', None) == request.user:
+                return True
+            # If object has a module attribute (Lesson), traverse to course
+            module = getattr(obj, 'module', None)
+            if module:
+                course = getattr(module, 'course', None)
+                if course and getattr(course, 'creator', None) == request.user:
+                    return True
         except Exception:
             pass
         return False

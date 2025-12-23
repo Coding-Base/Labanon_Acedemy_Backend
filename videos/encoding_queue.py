@@ -6,6 +6,7 @@ Publishes encoding jobs to Redis queue for EncodingBackend to consume
 import json
 import redis
 import os
+import uuid
 from django.conf import settings
 
 # Initialize Redis connection for encoding queue (DB 1)
@@ -13,11 +14,11 @@ redis_host = os.getenv('REDIS_HOST', 'localhost')
 redis_port = int(os.getenv('REDIS_PORT', 6379))
 redis_password = os.getenv('REDIS_PASSWORD', None)
 
-# Main backend uses DB 0, EncodingBackend uses DB 1
+# Main backend uses DB 0, EncodingBackend uses DB 1 for encoding queue
 redis_client = redis.Redis(
     host=redis_host,
     port=redis_port,
-    db=0,
+    db=1,
     password=redis_password,
     decode_responses=True
 )
@@ -43,10 +44,14 @@ def queue_video_for_encoding(video_id, s3_original_key, duration, file_size, qua
     if quality_presets is None:
         quality_presets = ['720p', '480p', '360p']
     
+    # Generate unique job ID
+    job_id = str(uuid.uuid4())
+    
     # Calculate HLS folder key
     s3_hls_folder_key = f"videos/{video_id}/hls"
     
     job_data = {
+        'job_id': job_id,
         'video_id': str(video_id),
         's3_original_key': s3_original_key,
         's3_hls_folder_key': s3_hls_folder_key,
@@ -58,7 +63,7 @@ def queue_video_for_encoding(video_id, s3_original_key, duration, file_size, qua
     try:
         # Publish to encoding queue
         redis_client.rpush(ENCODING_QUEUE, json.dumps(job_data))
-        print(f"✓ Video {video_id} queued for encoding")
+        print(f"✓ Video {video_id} queued for encoding with job_id {job_id}")
         return True
     except Exception as e:
         print(f"✗ Error queueing video {video_id}: {str(e)}")
