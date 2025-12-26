@@ -475,3 +475,36 @@ class ExamProgressView(APIView):
             'progress': progress
         })
 
+
+class AnalyticsView(APIView):
+    """Get CBT analytics for admin dashboard"""
+    permission_classes = [IsMasterAdmin]
+
+    def get(self, request):
+        from django.db.models import Count, Avg, F
+        
+        # Get total exam attempts
+        total_attempts = ExamAttempt.objects.count()
+        
+        # Get average score
+        avg_score = ExamAttempt.objects.aggregate(avg=Avg('score'))['avg'] or 0
+        
+        # Get subjects with attempt counts
+        subjects_data = Subject.objects.annotate(
+            attempt_count=Count('attempts', distinct=True),
+            avg_score=Avg('attempts__score')
+        ).values('name', 'attempt_count', 'avg_score').order_by('-attempt_count')
+        
+        # Get today's attempts
+        today = timezone.now().date()
+        today_attempts = ExamAttempt.objects.filter(
+            started_at__date=today
+        ).count()
+        
+        return Response({
+            'total_attempts': total_attempts,
+            'total_exams': Exam.objects.count(),
+            'average_score': float(avg_score),
+            'today_attempts': today_attempts,
+            'subjects': list(subjects_data[:10])  # Top 10 subjects
+        })

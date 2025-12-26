@@ -3,13 +3,20 @@ from rest_framework import serializers
 from django.conf import settings
 import re
 
-from .models import Institution, Course, Module, Lesson, Enrollment, Payment, CartItem
+from .models import Institution, Course, Module, Lesson, Enrollment, Payment, CartItem, Diploma, DiplomaEnrollment, Portfolio, PortfolioGalleryItem
 
 
 class InstitutionSerializer(serializers.ModelSerializer):
+    owner_username = serializers.CharField(source='owner.username', read_only=True)
+    courses_count = serializers.SerializerMethodField()
+
     class Meta:
         model = Institution
-        fields = '__all__'
+        fields = ['id', 'owner_username', 'name', 'description', 'is_active', 'courses_count', 'created_at']
+        read_only_fields = ['id', 'owner_username', 'courses_count', 'created_at']
+
+    def get_courses_count(self, obj):
+        return obj.courses.count()
 
 
 class LessonSerializer(serializers.ModelSerializer):
@@ -39,13 +46,15 @@ class ModuleSerializer(serializers.ModelSerializer):
 class CourseSerializer(serializers.ModelSerializer):
     modules = ModuleSerializer(many=True, read_only=True)
     creator = serializers.StringRelatedField()
+    creator_username = serializers.CharField(source='creator.username', read_only=True)
+    institution_name = serializers.CharField(source='institution.name', read_only=True, allow_null=True)
     slug = serializers.SlugField(read_only=True)
     # return absolute image URL when possible
     image = serializers.SerializerMethodField()
 
     class Meta:
         model = Course
-        fields = ['id', 'title', 'slug', 'image', 'description', 'price', 'published', 'creator', 'modules']
+        fields = ['id', 'title', 'slug', 'image', 'description', 'price', 'published', 'creator', 'creator_username', 'institution_name', 'created_at', 'modules']
 
     def _normalize_path(self, raw: str) -> str:
         """
@@ -120,10 +129,17 @@ class EnrollmentSerializer(serializers.ModelSerializer):
 
 
 class PaymentSerializer(serializers.ModelSerializer):
+    course_title = serializers.CharField(source='course.title', read_only=True, allow_null=True)
+    diploma_title = serializers.CharField(source='diploma.title', read_only=True, allow_null=True)
+
     class Meta:
         model = Payment
-        fields = ['id', 'user', 'course', 'amount', 'kind', 'platform_fee', 'provider_reference', 'status', 'created_at']
-        read_only_fields = ['platform_fee', 'status', 'created_at']
+        fields = [
+            'id', 'user', 'course', 'course_title', 'diploma', 'diploma_title',
+            'amount', 'kind', 'platform_fee', 'creator_amount', 'paystack_reference',
+            'provider_reference', 'status', 'created_at', 'verified_at'
+        ]
+        read_only_fields = ['platform_fee', 'creator_amount', 'status', 'created_at', 'verified_at']
 
 
 class CartItemSerializer(serializers.ModelSerializer):
@@ -138,3 +154,50 @@ class CartItemSerializer(serializers.ModelSerializer):
 
     # accept course_id on create
     course_id = serializers.PrimaryKeyRelatedField(queryset=Course.objects.all(), write_only=True, source='course')
+
+
+class DiplomaSerializer(serializers.ModelSerializer):
+    institution_name = serializers.CharField(source='institution.name', read_only=True)
+    creator_username = serializers.CharField(source='creator.username', read_only=True)
+
+    class Meta:
+        model = Diploma
+        fields = [
+            'id', 'institution', 'institution_name', 'creator', 'creator_username',
+            'title', 'slug', 'description', 'image', 'price', 'duration',
+            'start_date', 'end_date', 'meeting_place', 'published', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['slug', 'created_at', 'updated_at']
+
+
+class DiplomaEnrollmentSerializer(serializers.ModelSerializer):
+    diploma = DiplomaSerializer(read_only=True)
+    diploma_id = serializers.PrimaryKeyRelatedField(queryset=Diploma.objects.all(), write_only=True, source='diploma')
+    user = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = DiplomaEnrollment
+        fields = ['id', 'user', 'diploma', 'diploma_id', 'purchased', 'purchased_at', 'completed', 'completed_at']
+
+    def get_user(self, obj):
+        return obj.user.id if obj.user else None
+
+
+class PortfolioGalleryItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PortfolioGalleryItem
+        fields = ['id', 'portfolio', 'title', 'description', 'image', 'url', 'order', 'created_at']
+
+
+class PortfolioSerializer(serializers.ModelSerializer):
+    institution_name = serializers.CharField(source='institution.name', read_only=True)
+    gallery_items = PortfolioGalleryItemSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Portfolio
+        fields = [
+            'id', 'institution', 'institution_name', 'title', 'description', 'overview',
+            'image', 'website', 'location', 'phone', 'email', 'theme_color', 'published', 'public_token',
+            'gallery_items', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['public_token', 'created_at', 'updated_at', 'gallery_items']

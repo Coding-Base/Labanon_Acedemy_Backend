@@ -30,6 +30,9 @@ INSTALLED_APPS = [
     'courses',
     'cbt',
     'videos',
+    'blog',
+    'subadmin',
+    'messaging',
 ]
 
 # filter out None if cloudinary not used

@@ -11,10 +11,14 @@ router = DefaultRouter()
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/users/', include('users.urls')),
+    path('api/admin/', include('users.urls')),  # Admin routes
     path('api/dashboard/', DashboardView.as_view(), name='dashboard'),
     path('api/', include('courses.urls')),
     path('api/cbt/', include('cbt.urls')),
     path('api/videos/', include('videos.urls')),
+    path('api/blog/', include('blog.urls')),
+    path('api/subadmin/', include('subadmin.urls')),
+    path('api/messages/', include('messaging.urls')),
     path('api/auth/', include('djoser.urls')),
     path('api/auth/', include('djoser.urls.jwt')),
 ]

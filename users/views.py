@@ -1,4 +1,4 @@
-from rest_framework import generics, permissions
+from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from .models import User
 from .serializers import UserSerializer, RegisterSerializer
@@ -7,6 +7,7 @@ from rest_framework import viewsets, mixins
 from rest_framework import permissions as drf_permissions
 from rest_framework import filters
 from rest_framework.pagination import PageNumberPagination
+from rest_framework.decorators import action
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Count, Sum
 from courses.models import Course, Enrollment, Payment
@@ -85,3 +86,89 @@ class UserAdminViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.
     filterset_fields = ['role']
     search_fields = ['username', 'email', 'first_name', 'last_name']
     ordering_fields = ['id', 'username', 'email']
+
+
+class ChangePasswordView(APIView):
+    """Endpoint to change user password."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        old_password = request.data.get('old_password')
+        new_password = request.data.get('new_password')
+        confirm_password = request.data.get('confirm_password')
+
+        # Validate inputs
+        if not old_password or not new_password or not confirm_password:
+            return Response(
+                {'error': 'All fields are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Check if old password is correct
+        if not user.check_password(old_password):
+            return Response(
+                {'error': 'Old password is incorrect'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Check if new passwords match
+        if new_password != confirm_password:
+            return Response(
+                {'error': 'New passwords do not match'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Check password length
+        if len(new_password) < 8:
+            return Response(
+                {'error': 'Password must be at least 8 characters long'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Set new password
+        user.set_password(new_password)
+        user.save()
+
+        return Response(
+            {'message': 'Password changed successfully'},
+            status=status.HTTP_200_OK
+        )
+
+
+class ProfileUpdateView(APIView):
+    """Endpoint to update user profile information."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def put(self, request):
+        user = request.user
+        
+        # Get fields from request
+        first_name = request.data.get('first_name')
+        last_name = request.data.get('last_name')
+        email = request.data.get('email')
+
+        # Validate email uniqueness if changed
+        if email and email != user.email:
+            if User.objects.filter(email=email).exists():
+                return Response(
+                    {'error': 'Email already in use'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            user.email = email
+
+        # Update fields
+        if first_name:
+            user.first_name = first_name
+        if last_name:
+            user.last_name = last_name
+
+        user.save()
+
+        return Response(
+            {
+                'message': 'Profile updated successfully',
+                'user': UserSerializer(user).data
+            },
+            status=status.HTTP_200_OK
+        )
