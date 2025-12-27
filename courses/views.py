@@ -282,12 +282,39 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
 
             # only allow if requester is the same tutor
             if user.is_authenticated and user.id == tutor_id:
-                qs = Payment.objects.filter(course__creator__id=tutor_id).order_by('-created_at')
+                # Get payments for courses AND diplomas created by this tutor
+                from django.db.models import Q
+                qs = Payment.objects.filter(
+                    Q(course__creator__id=tutor_id) | Q(diploma__creator__id=tutor_id)
+                ).order_by('-created_at')
                 if status_param:
                     qs = qs.filter(status=status_param)
                 return qs
             # not authorized
             return Payment.objects.none()
+
+        # If institution filtering requested (for institution dashboards)
+        institution_param = params.get('course__institution') or params.get('diploma__institution')
+        if institution_param:
+            try:
+                institution_id = int(institution_param)
+            except (TypeError, ValueError):
+                return Payment.objects.none()
+
+            # Check if requester owns the institution
+            try:
+                inst = Institution.objects.get(id=institution_id, owner=user)
+            except Institution.DoesNotExist:
+                return Payment.objects.none()
+
+            # Return payments for courses AND diplomas from this institution
+            from django.db.models import Q
+            qs = Payment.objects.filter(
+                Q(course__institution__id=institution_id) | Q(diploma__institution__id=institution_id)
+            ).order_by('-created_at')
+            if status_param:
+                qs = qs.filter(status=status_param)
+            return qs
 
         # Default behavior: return payments where current user is the buyer
         qs = Payment.objects.filter(user=user).order_by('-created_at')

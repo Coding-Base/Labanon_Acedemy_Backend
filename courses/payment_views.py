@@ -272,10 +272,38 @@ class SubAccountViewSet(viewsets.ViewSet):
         account_name = request.data.get('account_name')
 
         if not all([bank_code, account_number, account_name]):
-            return Response({'detail': 'Missing required fields'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({'detail': 'Missing required fields: bank_code, account_number, account_name'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             client = PaystackClient()
+            
+            # Validate account_number is numeric and 10 digits
+            if not account_number.isdigit() or len(account_number) != 10:
+                return Response({'detail': 'Account number must be 10 digits'}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Validate bank_code exists in Paystack's bank list to avoid invalid bank codes
+            try:
+                banks = client.list_banks()
+                valid_codes = {str(b.get('code')) for b in banks}
+                provided = str(bank_code).strip()
+
+                # Try common normalizations: zfill to 3 digits, and strip leading zeros
+                candidates = {provided, provided.zfill(3), str(int(provided)) if provided.isdigit() else provided}
+                matched = None
+                for c in candidates:
+                    if c in valid_codes:
+                        matched = c
+                        break
+
+                if matched:
+                    # normalize bank_code to the matched canonical value
+                    bank_code = matched
+                else:
+                    # Do not reject immediately — allow resolve to run which gives the authoritative Paystack error.
+                    logger.warning(f"Provided bank code '{bank_code}' not found in Paystack list; proceeding to resolve for authoritative error.")
+            except PaystackError:
+                # If Paystack list_banks fails, continue and allow resolve to catch invalid combos
+                logger.warning('Could not validate bank code against Paystack list; continuing to resolve.')
             
             # Create sub-account with all required and optional fields
             subaccount_data = client.create_subaccount(
@@ -286,6 +314,7 @@ class SubAccountViewSet(viewsets.ViewSet):
                 description=f'Sub-account for {account_name}',
                 primary_contact_email=user.email,
                 primary_contact_name=f'{user.first_name} {user.last_name}' if user.first_name or user.last_name else user.username,
+                mobile=getattr(user, 'phone', '') or '',
             )
 
             # Save sub-account to database

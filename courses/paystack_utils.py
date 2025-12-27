@@ -51,8 +51,10 @@ class PaystackClient:
                 error_body = e.response.json() if hasattr(e, 'response') and e.response is not None else {}
             except:
                 error_body = str(e)
-            logger.error(f"Paystack API error: {str(e)}, Status: {e.response.status_code if hasattr(e, 'response') and e.response else 'N/A'}, Response: {error_body}")
-            raise PaystackError(f"Paystack API error: {str(e)}")
+            status_code = e.response.status_code if hasattr(e, 'response') and e.response else 'N/A'
+            logger.error(f"Paystack API error: {str(e)}, Status: {status_code}, Response: {error_body}")
+            # Raise with the parsed response body when available to help debugging
+            raise PaystackError(f"Paystack API error: Status {status_code}, Response: {error_body}")
     
     def initialize_payment(self, email, amount, reference, metadata=None, callback_url=None):
         """
@@ -118,6 +120,23 @@ class PaystackClient:
         Returns:
             dict: Response with subaccount_code if successful
         """
+        # Attempt to resolve the bank account first to catch invalid account details
+        try:
+            resolved = self.resolve_bank_account(account_number, settlement_bank)
+        except PaystackError as e:
+            logger.error(f"Bank account resolution failed: {e}")
+            raise PaystackError(f"Account details are invalid: {e}")
+
+        # If Paystack returned an account_name, verify it matches the provided account holder name
+        account_name = resolved.get('account_name') if isinstance(resolved, dict) else None
+        def _norm(s: str) -> str:
+            return ' '.join(s.split()).lower() if isinstance(s, str) else ''
+
+        if account_name and account_holder_name:
+            if _norm(account_name) != _norm(account_holder_name):
+                logger.error(f"Resolved account name '{account_name}' does not match provided account holder name '{account_holder_name}'")
+                raise PaystackError(f"Account name does not match bank records: resolved='{account_name}' provided='{account_holder_name}'")
+
         data = {
             'business_name': business_name,
             'settlement_bank': settlement_bank,
@@ -134,14 +153,33 @@ class PaystackClient:
         if primary_contact_name:
             data['primary_contact_name'] = primary_contact_name
         if mobile:
-            data['mobile'] = mobile
+            # Paystack expects primary contact phone under 'primary_contact_phone'
+            data['primary_contact_phone'] = mobile
         
         logger.debug(f"Paystack subaccount request data: {data}")
         response = self._request('POST', '/subaccount', data)
         if not response.get('status'):
             error_msg = response.get('message', 'Failed to create sub-account')
             logger.error(f"Paystack subaccount error: {error_msg}, Response: {response}")
-            raise PaystackError(error_msg)
+            # Surface the full response to help debugging (validation errors etc.)
+            raise PaystackError(f"{error_msg}: {response}")
+        return response.get('data', {})
+
+    def resolve_bank_account(self, account_number, bank_code):
+        """
+        Resolve a bank account using Paystack's resolve endpoint to validate account number and bank code.
+
+        Returns the `data` dict on success (contains `account_name`), or raises PaystackError on failure.
+        """
+        if not account_number or not bank_code:
+            raise PaystackError("Missing account number or bank code for account resolution")
+
+        # Paystack expects query params `account_number` and `bank_code`
+        endpoint = f"/bank/resolve?account_number={account_number}&bank_code={bank_code}"
+        response = self._request('GET', endpoint)
+        if not response.get('status'):
+            logger.error(f"Paystack resolve failed: {response}")
+            raise PaystackError(response.get('message', 'Failed to resolve bank account'))
         return response.get('data', {})
     
     def update_subaccount(self, id_or_code, data):
