@@ -45,20 +45,38 @@ class S3Manager:
         )
         self.bucket_name = settings.AWS_STORAGE_BUCKET_NAME
         self.cloudfront_domain = getattr(settings, 'CLOUDFRONT_DOMAIN', None)
+
+        # Default SSE algorithm to use when creating multipart upload
+        # 'AES256' for SSE-S3, or 'aws:kms' for SSE-KMS
+        self.default_sse = getattr(settings, 'AWS_S3_DEFAULT_SSE', 'AES256')
+        self.kms_key_id = getattr(settings, 'AWS_S3_KMS_KEY_ID', None)
     
-    def initiate_multipart_upload(self, video_id: str, file_name: str) -> str:
-        """Initiate multipart upload and return upload ID."""
+    def initiate_multipart_upload(self, video_id: str, file_name: str, content_type: str = 'video/mp4') -> (str, str):
+        """Initiate multipart upload and return upload ID and key.
+
+        Important: include ServerSideEncryption so bucket policy that requires SSE won't deny the init.
+        """
         key = f"videos/{video_id}/original/{file_name}"
-        response = self.s3_client.create_multipart_upload(
-            Bucket=self.bucket_name,
-            Key=key,
-            ContentType='video/mp4',
-            Metadata={'video_id': str(video_id)}
-        )
+
+        create_kwargs = {
+            'Bucket': self.bucket_name,
+            'Key': key,
+            'ContentType': content_type,
+            'Metadata': {'video_id': str(video_id)}
+        }
+
+        # Attach server-side-encryption header according to settings
+        if self.default_sse:
+            create_kwargs['ServerSideEncryption'] = self.default_sse
+            if self.default_sse == 'aws:kms' and self.kms_key_id:
+                # include optional KMS key id if using KMS
+                create_kwargs['SSEKMSKeyId'] = self.kms_key_id
+
+        response = self.s3_client.create_multipart_upload(**create_kwargs)
         return response['UploadId'], key
     
     def get_presigned_upload_url(self, bucket: str, key: str, part_number: int, upload_id: str, expires_in: int = 3600) -> str:
-        """Generate presigned URL for uploading a part."""
+        """Generate presigned URL for uploading a part. Parts inherit SSE set at init."""
         return self.s3_client.generate_presigned_url(
             'upload_part',
             Params={
@@ -97,6 +115,7 @@ class S3Manager:
         """Generate CloudFront URL for thumbnail."""
         thumbnail_key = f"videos/{video_id}/thumbnail.jpg"
         return f"https://{self.cloudfront_domain}/{thumbnail_key}"
+
 
 
 class VideoViewSet(viewsets.ModelViewSet):
@@ -141,9 +160,11 @@ class VideoViewSet(viewsets.ModelViewSet):
         s3_manager = S3Manager()
         try:
             upload_id, s3_key = s3_manager.initiate_multipart_upload(
-                str(video_id),
-                data['file_name']
-            )
+    str(video_id),
+    data['file_name'],
+    content_type=data.get('file_type', 'video/mp4')
+)
+
             
             video.s3_original_key = s3_key
             video.save()

@@ -173,3 +173,12 @@ else:
     CLOUDFRONT_DOMAIN = None
     CLOUDFRONT_DISTRIBUTION_ID = None
 
+
+
+# settings.py
+# AWS_S3_DEFAULT_SSE = 'AES256' 
+AWS_S3_DEFAULT_SSE = os.getenv('AWS_S3_DEFAULT_SSE', 'AES256')
+  # or 'aws:kms' if you want KMS
+# If using aws:kms, also add AWS_S3_KMS_KEY_ID = 'arn:aws:kms:...' (optional)
+
+
