@@ -81,3 +81,5 @@ ehthumbs.db
 # node_modules (if using any node tools in backend)
 node_modules/
 npm-debug.log*
+
+cloudfront_private_key.pem

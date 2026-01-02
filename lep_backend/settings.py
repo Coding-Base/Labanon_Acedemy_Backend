@@ -47,6 +47,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'lep_backend.middleware.CloudFrontOriginMiddleware',
 ]
 
 ROOT_URLCONF = 'lep_backend.urls'
@@ -157,6 +158,12 @@ if USE_AWS_S3:
     # CloudFront Configuration
     CLOUDFRONT_DOMAIN = os.environ.get('CLOUDFRONT_DOMAIN')  # e.g., d123456abcdef.cloudfront.net
     CLOUDFRONT_DISTRIBUTION_ID = os.environ.get('CLOUDFRONT_DISTRIBUTION_ID')
+    CLOUDFRONT_KEY_PAIR_ID = os.environ.get('CLOUDFRONT_KEY_PAIR_ID')
+    CLOUDFRONT_PRIVATE_KEY_PATH = os.environ.get('CLOUDFRONT_PRIVATE_KEY_PATH')
+    
+    # CloudFront Custom Headers for Security
+    CLOUDFRONT_ORIGIN_SECRET = os.environ.get('CLOUDFRONT_ORIGIN_SECRET')
+    CLOUDFRONT_CUSTOM_AUTH_SECRET = os.environ.get('CLOUDFRONT_CUSTOM_AUTH_SECRET')
     
     # S3 Storage Settings
     AWS_S3_CUSTOM_DOMAIN = f"{CLOUDFRONT_DOMAIN}"
@@ -172,6 +179,10 @@ else:
     DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
     CLOUDFRONT_DOMAIN = None
     CLOUDFRONT_DISTRIBUTION_ID = None
+    CLOUDFRONT_KEY_PAIR_ID = None
+    CLOUDFRONT_PRIVATE_KEY_PATH = None
+    CLOUDFRONT_ORIGIN_SECRET = None
+    CLOUDFRONT_CUSTOM_AUTH_SECRET = None
 
 
 

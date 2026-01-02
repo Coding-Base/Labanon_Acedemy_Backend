@@ -2,6 +2,8 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.exceptions import NotFound
+from django.core.exceptions import ValidationError
 from django.conf import settings
 from django.utils import timezone
 import boto3
@@ -10,6 +12,7 @@ import uuid
 import os
 import requests
 import logging
+import time
 
 from .models import Video, VideoUploadSession, VideoConversionTask
 from .serializers import (
@@ -17,6 +20,7 @@ from .serializers import (
     VideoConversionTaskSerializer, PresignedUrlRequestSerializer
 )
 from .encoding_queue import queue_video_for_encoding
+from .cloudfront_utils import CloudFrontURLSigner
 
 logger = logging.getLogger(__name__)
 
@@ -107,14 +111,26 @@ class S3Manager:
         )
     
     def generate_hls_manifest_url(self, video_id: str) -> str:
-        """Generate CloudFront URL for HLS manifest."""
-        manifest_key = f"videos/{video_id}/hls/master.m3u8"
-        return f"https://{self.cloudfront_domain}/{manifest_key}"
+        """Generate signed CloudFront URL for HLS manifest (24 hour expiry)."""
+        try:
+            signer = CloudFrontURLSigner()
+            return signer.generate_hls_signed_url(str(video_id), expires_in_hours=24)
+        except Exception as e:
+            logger.error(f"Failed to generate signed HLS URL: {str(e)}")
+            # Fallback to unsigned URL if signing fails (not recommended for production)
+            manifest_key = f"videos/{video_id}/hls/master.m3u8"
+            return f"https://{self.cloudfront_domain}/{manifest_key}"
     
     def generate_thumbnail_url(self, video_id: str) -> str:
-        """Generate CloudFront URL for thumbnail."""
-        thumbnail_key = f"videos/{video_id}/thumbnail.jpg"
-        return f"https://{self.cloudfront_domain}/{thumbnail_key}"
+        """Generate signed CloudFront URL for thumbnail (7 day expiry)."""
+        try:
+            signer = CloudFrontURLSigner()
+            return signer.generate_thumbnail_signed_url(str(video_id), expires_in_hours=168)
+        except Exception as e:
+            logger.error(f"Failed to generate signed thumbnail URL: {str(e)}")
+            # Fallback to unsigned URL if signing fails
+            thumbnail_key = f"videos/{video_id}/thumbnail.jpg"
+            return f"https://{self.cloudfront_domain}/{thumbnail_key}"
 
 
 
@@ -127,9 +143,54 @@ class VideoViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     lookup_field = 'id'
     
+    def get_object(self):
+        """
+        Override default get_object to support legacy integer PKs as well as
+        the newer UUID `id` field. Try integer lookup first to avoid Django's
+        UUIDField validation error when a numeric id (e.g. "24") is passed.
+        """
+        lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
+        lookup_value = self.kwargs.get(lookup_url_kwarg)
+        if lookup_value is None:
+            raise NotFound('No lookup value provided')
+
+        # Try integer PK (legacy integer IDs)
+        try:
+            obj = Video.objects.get(pk=int(lookup_value))
+        except (ValueError, Video.DoesNotExist, ValidationError):
+            # Fallback to UUID-based id lookup
+            try:
+                obj = Video.objects.get(id=lookup_value)
+            except (ValueError, Video.DoesNotExist, ValidationError):
+                raise NotFound('Video not found')
+
+        # Check permissions on the fetched object
+        self.check_object_permissions(self.request, obj)
+        return obj
+    
     def get_queryset(self):
         """Return videos for the current user."""
         return Video.objects.filter(creator=self.request.user)
+
+    def _get_video_by_id(self, video_id, creator=None):
+        """Helper to fetch a Video by either legacy integer PK or UUID `id`.
+
+        If `creator` is provided, it will filter by that creator as well.
+        Raises Video.DoesNotExist if not found.
+        """
+        # Try integer PK first
+        try:
+            int_id = int(video_id)
+            qs = Video.objects.filter(pk=int_id)
+            if creator is not None:
+                qs = qs.filter(creator=creator)
+            return qs.get()
+        except (ValueError, Video.DoesNotExist, ValidationError):
+            # Fallback to UUID 'id' lookup
+            qs = Video.objects.filter(id=video_id)
+            if creator is not None:
+                qs = qs.filter(creator=creator)
+            return qs.get()
     
     @action(detail=False, methods=['post'])
     def initiate_upload(self, request):
@@ -209,7 +270,7 @@ class VideoViewSet(viewsets.ModelViewSet):
         part_number = serializer.validated_data['part_number']
         
         try:
-            video = Video.objects.get(id=video_id, creator=request.user)
+            video = self._get_video_by_id(video_id, creator=request.user)
             session = video.upload_session
             
             s3_manager = S3Manager()
@@ -265,7 +326,7 @@ class VideoViewSet(viewsets.ModelViewSet):
             )
         
         try:
-            video = Video.objects.get(id=video_id, creator=request.user)
+            video = self._get_video_by_id(video_id, creator=request.user)
             session = video.upload_session
             
             s3_manager = S3Manager()
@@ -317,13 +378,144 @@ class VideoViewSet(viewsets.ModelViewSet):
     def conversion_status(self, request, id=None):
         """Get conversion task status for a video."""
         try:
-            video = Video.objects.get(id=id, creator=request.user)
+            video = self._get_video_by_id(id, creator=request.user)
             try:
                 task = video.conversion_task
                 serializer = VideoConversionTaskSerializer(task)
                 return Response(serializer.data)
             except VideoConversionTask.DoesNotExist:
                 return Response({'status': 'no_task'})
+        except Video.DoesNotExist:
+            return Response(
+                {'error': 'Video not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+    
+    @action(detail=True, methods=['get'])
+    def signed_url(self, request, id=None):
+        """
+        Get a signed CloudFront URL for video playback with custom security headers.
+        URL is valid for 24 hours and requires user authentication.
+        
+        Returns:
+            {
+                'url': 'signed_cloudfront_url',
+                'auth_header': 'user_id:video_id:timestamp:signature',
+                'header_name': 'X-CloudFront-Auth',
+                'expires_in_hours': 24,
+                'video_id': 'uuid',
+                'title': 'video_title'
+            }
+        """
+        try:
+            video = None
+            
+            # Try as integer ID first (for legacy videos created before UUID migration)
+            try:
+                video_id_int = int(id)
+                video = Video.objects.get(pk=video_id_int)
+            except (ValueError, Video.DoesNotExist, ValidationError):
+                # If not an integer or doesn't exist as integer, try as UUID
+                try:
+                    video = Video.objects.get(id=id)
+                except (ValueError, Video.DoesNotExist, ValidationError):
+                    return Response(
+                        {'error': 'Video not found'},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+            
+            if not video:
+                return Response(
+                    {'error': 'Video not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Check if user has access to this video's course
+            from courses.models import Course, Enrollment
+            
+            has_access = False
+            
+            # Determine the course via the lesson linked to this Video
+            course = None
+            try:
+                # `Lesson` has FK `video_s3` to `videos.Video` with related_name='lessons'
+                if hasattr(video, 'lessons') and video.lessons.exists():
+                    lesson_obj = video.lessons.first()
+                    if lesson_obj and hasattr(lesson_obj, 'module') and lesson_obj.module:
+                        course = getattr(lesson_obj.module, 'course', None)
+            except Exception:
+                course = None
+
+            # Check if user is the course creator
+            if course and request.user == course.creator:
+                has_access = True
+            # Check if user is enrolled in the course (only count purchased enrollments)
+            elif course and Enrollment.objects.filter(user=request.user, course=course, purchased=True).exists():
+                has_access = True
+            # Check if it's a public preview
+            elif getattr(video, 'is_preview', False):
+                has_access = True
+            
+            if not has_access:
+                # Detailed debug information to help diagnose access denial
+                try:
+                    course_info = None
+                    if hasattr(video, 'lesson') and getattr(video, 'lesson') is not None:
+                        try:
+                            course_obj = video.lesson.course
+                            course_info = {
+                                'course_id': str(getattr(course_obj, 'id', None)),
+                                'instructor': str(getattr(course_obj, 'instructor', None)),
+                                'institution': str(getattr(course_obj, 'institution', None)),
+                            }
+                        except Exception:
+                            course_info = 'unable_to_resolve_course'
+                    enrollment_exists = False
+                    try:
+                        enrollment_exists = Enrollment.objects.filter(user=request.user, course=course_obj).exists() if course_obj is not None else False
+                    except Exception:
+                        enrollment_exists = False
+
+                    logger.warning(
+                        "Unauthorized access attempt: user=%s video=%s course=%s enrolled=%s is_preview=%s",
+                        getattr(request.user, 'id', None),
+                        getattr(video, 'id', None),
+                        course_info,
+                        enrollment_exists,
+                        getattr(video, 'is_preview', False)
+                    )
+                except Exception:
+                    logger.exception('Error while logging unauthorized access details')
+
+                return Response(
+                    {'error': 'You do not have access to this video'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Generate signed URL
+            try:
+                signer = CloudFrontURLSigner()
+                signed_url = signer.generate_hls_signed_url(str(video.id), expires_in_hours=24)
+                
+                # Generate custom auth header for additional security
+                auth_header = signer.generate_auth_header(request.user.id, str(video.id))
+                
+                return Response({
+                    'url': signed_url,
+                    'auth_header': auth_header,
+                    'header_name': 'X-CloudFront-Auth',
+                    'expires_in_hours': 24,
+                    'video_id': str(video.id),
+                    'title': video.title
+                })
+            
+            except Exception as e:
+                logger.error(f"Failed to generate signed URL for video {video.id}: {str(e)}")
+                return Response(
+                    {'error': 'Failed to generate signed URL'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+        
         except Video.DoesNotExist:
             return Response(
                 {'error': 'Video not found'},
@@ -356,7 +548,11 @@ def update_video_encoding_status(request, video_id):
     }
     """
     try:
-        video = Video.objects.get(id=video_id)
+        # Support legacy integer IDs or UUIDs from worker payloads
+        try:
+            video = Video.objects.get(pk=int(video_id))
+        except (ValueError, Video.DoesNotExist):
+            video = Video.objects.get(id=video_id)
         
         new_status = request.data.get('status', 'ready')
         error_message = request.data.get('error_message', '')
