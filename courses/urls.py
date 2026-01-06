@@ -4,7 +4,7 @@ from .views import (
     CourseViewSet, InstitutionViewSet, EnrollmentViewSet, ModuleViewSet, 
     LessonViewSet, PaymentViewSet, CartItemViewSet, DiplomaViewSet, 
     DiplomaEnrollmentViewSet, PortfolioViewSet, PortfolioGalleryItemViewSet,
-    CertificateViewSet, SignatureView, LogoView
+    CertificateViewSet, SignatureView, LogoView,TutorApplicationView
 )
 from .payment_views import (
     InitiateUnlockView, PaystackWebhookView, InitiatePaymentView, 
@@ -35,6 +35,7 @@ urlpatterns = [
 	# lesson media upload
     path('lessons/upload-media/', LessonMediaUploadView.as_view(), name='lesson-media-upload'),
     path('courses/upload-image/', CourseImageUploadView.as_view(), name='course-image-upload'),
+    path('tutor-application/', TutorApplicationView.as_view(), name='tutor-application'),
 ]
 
 router = DefaultRouter()

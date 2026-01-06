@@ -1,10 +1,17 @@
 # backend/courses/serializers.py
 from rest_framework import serializers
 from django.conf import settings
+from django.db.models import Avg, Sum # Imported for calculations
+from django.core.files.storage import default_storage
 import re
+import uuid
+import os
 
-from .models import Institution, Course, Module, Lesson, Enrollment, Payment, CartItem, Diploma, DiplomaEnrollment, Portfolio, PortfolioGalleryItem, Certificate
-
+from .models import (
+    Institution, Course, Module, Lesson, Enrollment, Payment, 
+    CartItem, Diploma, DiplomaEnrollment, Portfolio, 
+    PortfolioGalleryItem, Certificate, Review
+)
 
 class InstitutionSerializer(serializers.ModelSerializer):
     owner_username = serializers.CharField(source='owner.username', read_only=True)
@@ -26,7 +33,10 @@ class LessonSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Lesson
-        fields = ['id', 'module', 'title', 'content', 'video', 'video_s3', 'video_s3_url', 'video_s3_status', 'youtube_url', 'order']
+        fields = [
+            'id', 'module', 'title', 'content', 'video', 'video_s3', 
+            'video_s3_url', 'video_s3_status', 'youtube_url', 'duration_minutes', 'order'
+        ]
     
     def get_video_s3_url(self, obj):
         """Return CloudFront URL if video_s3 exists and is ready."""
@@ -49,78 +59,119 @@ class CourseSerializer(serializers.ModelSerializer):
     creator_username = serializers.CharField(source='creator.username', read_only=True)
     institution_name = serializers.CharField(source='institution.name', read_only=True, allow_null=True)
     slug = serializers.SlugField(read_only=True)
-    # return absolute image URL when possible
+    
+    # Image handling: 'image' is read-only URL, 'image_upload' is write-only File
     image = serializers.SerializerMethodField()
+    image_upload = serializers.FileField(write_only=True, required=False)
+
+    # Real Stats Field
+    stats = serializers.SerializerMethodField()
+
+    # Scheduled Course Fields - Explicitly optional
+    start_date = serializers.DateField(required=False, allow_null=True)
+    end_date = serializers.DateField(required=False, allow_null=True)
+    meeting_time = serializers.TimeField(required=False, allow_null=True)
+    meeting_place = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    meeting_link = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
     class Meta:
         model = Course
-        fields = ['id', 'title', 'slug', 'image', 'description', 'price', 'published', 'creator', 'creator_username', 'institution_name', 'created_at', 'modules']
+        fields = [
+            'id', 'title', 'slug', 'image', 'image_upload', 'description', 'price', 
+            'published', 'creator', 'creator_username', 'institution_name', 'created_at', 'modules',
+            'stats', # <--- Added stats field
+            # Scheduled Course Fields
+            'start_date', 'end_date', 'meeting_time', 'meeting_place', 'meeting_link'
+        ]
+
+    def get_stats(self, obj):
+        """Calculate real statistics for the course."""
+        # 1. Rating
+        # Assuming Review model has related_name='reviews' to Course
+        reviews = obj.reviews.all()
+        avg_rating = reviews.aggregate(Avg('rating'))['rating__avg'] or 0
+        ratings_count = reviews.count()
+
+        # 2. Students (Purchased Enrollments)
+        students_count = obj.enrollments.filter(purchased=True).count()
+
+        # 3. Duration (Sum of lessons duration_minutes)
+        # We query all lessons connected to modules of this course
+        total_minutes = Lesson.objects.filter(module__course=obj).aggregate(total=Sum('duration_minutes'))['total'] or 0
+        hours = total_minutes // 60
+        minutes = total_minutes % 60
+        duration_str = f"{int(hours)}h {int(minutes)}m"
+
+        return {
+            'rating': round(avg_rating, 1),
+            'ratings_count': ratings_count,
+            'students': students_count,
+            'duration': duration_str
+        }
 
     def _normalize_path(self, raw: str) -> str:
-        """
-        Normalize the stored image path so we don't end up with duplicate
-        '/media/media/...' or missing leading slash issues.
-        Returns a path that starts with a single '/media/' followed by the relative path.
-        """
-        if not raw:
-            return ''
-
+        if not raw: return ''
         raw = raw.strip()
-
-        # If it's a full URL, return as-is later (caller checks)
-        if raw.startswith('http://') or raw.startswith('https://'):
-            return raw
-
-        # If the stored value contains the SITE_URL, remove it so we only have the path
+        if raw.startswith('http://') or raw.startswith('https://'): return raw
         site = getattr(settings, 'SITE_URL', '').rstrip('/')
-        if site and raw.startswith(site):
-            raw = raw[len(site):]
-
-        # Collapse repeated "/media/" segments (e.g. "/media/media/courses/.." -> "/media/courses/..")
-        # Also handle raw that may be like "media/courses/..."
-        # Ensure it starts with a single leading slash.
-        # We'll use regex to collapse repeated /media/ occurrences.
-        raw = re.sub(r'(^/+)', '/', raw)  # ensure single leading slash
-        # replace repeated 'media' segments like /media/media/... -> /media/...
+        if site and raw.startswith(site): raw = raw[len(site):]
+        raw = re.sub(r'(^/+)', '/', raw)
         raw = re.sub(r'(\/media\/)+', '/media/', raw)
-
-        # If after normalization it doesn't start with /media/, ensure media prefix exists
-        media_prefix = settings.MEDIA_URL.rstrip('/')  # normally '/media'
+        media_prefix = settings.MEDIA_URL.rstrip('/')
         if not raw.startswith(media_prefix):
-            # strip leading slashes and prefix MEDIA_URL
             raw = f"{media_prefix}/{raw.lstrip('/')}"
         return raw
 
     def get_image(self, obj):
         raw = (obj.image or '').strip()
-        if not raw:
-            return ''
-
-        # If already absolute URL, return as-is
-        if raw.startswith('http://') or raw.startswith('https://'):
-            return raw
-
-        # Normalize raw path to a single path starting with /media/...
+        if not raw: return ''
+        if raw.startswith('http://') or raw.startswith('https://'): return raw
         normalized = self._normalize_path(raw)
-
         request = self.context.get('request')
-        # if serializer has request context, build absolute uri
-        if request is not None:
-            # request.build_absolute_uri expects a path (leading slash ok)
-            return request.build_absolute_uri(normalized)
-
-        # fallback: build with SITE_URL (ensure no double slashes)
+        if request is not None: return request.build_absolute_uri(normalized)
         site = getattr(settings, 'SITE_URL', '').rstrip('/')
-        if site:
-            return f"{site}{normalized}"
-        # as a last fallback return normalized path (frontend should resolve)
+        if site: return f"{site}{normalized}"
         return normalized
+
+    def create(self, validated_data):
+        """Handle image upload during creation"""
+        image_file = validated_data.pop('image_upload', None)
+        course = super().create(validated_data)
+        if image_file:
+            self._handle_image_upload(course, image_file)
+        return course
+
+    def update(self, instance, validated_data):
+        """Handle image upload during update"""
+        image_file = validated_data.pop('image_upload', None)
+        course = super().update(instance, validated_data)
+        if image_file:
+            self._handle_image_upload(course, image_file)
+        return course
+
+    def _handle_image_upload(self, course, image_file):
+        """Helper to save image file and update course string field."""
+        try:
+            ext = image_file.name.split('.')[-1]
+            name = f"courses/{uuid.uuid4().hex}.{ext}"
+            saved_name = default_storage.save(name, image_file)
+            
+            try:
+                url = default_storage.url(saved_name)
+            except Exception:
+                url = f"{getattr(settings, 'MEDIA_URL', '/media/')}{saved_name}"
+            
+            if url.startswith('/') and getattr(settings, 'SITE_URL', None):
+                url = f"{settings.SITE_URL.rstrip('/')}{url}"
+                
+            course.image = url
+            course.save()
+        except Exception as e:
+            print(f"Error saving course image: {e}")
 
 
 class EnrollmentSerializer(serializers.ModelSerializer):
-    # return nested course data for convenience in frontend lists
     course = CourseSerializer(read_only=True)
-    # allow creating/updating by passing course_id
     course_id = serializers.PrimaryKeyRelatedField(queryset=Course.objects.all(), write_only=True, source='course')
 
     class Meta:
@@ -144,6 +195,7 @@ class PaymentSerializer(serializers.ModelSerializer):
 
 class CartItemSerializer(serializers.ModelSerializer):
     course = CourseSerializer(read_only=True)
+    course_id = serializers.PrimaryKeyRelatedField(queryset=Course.objects.all(), write_only=True, source='course')
 
     class Meta:
         model = CartItem
@@ -152,22 +204,79 @@ class CartItemSerializer(serializers.ModelSerializer):
             'course_id': {'write_only': True}
         }
 
-    # accept course_id on create
-    course_id = serializers.PrimaryKeyRelatedField(queryset=Course.objects.all(), write_only=True, source='course')
-
 
 class DiplomaSerializer(serializers.ModelSerializer):
     institution_name = serializers.CharField(source='institution.name', read_only=True)
     creator_username = serializers.CharField(source='creator.username', read_only=True)
+    
+    # Image handling
+    image = serializers.SerializerMethodField()
+    image_upload = serializers.FileField(write_only=True, required=False)
 
     class Meta:
         model = Diploma
         fields = [
             'id', 'institution', 'institution_name', 'creator', 'creator_username',
-            'title', 'slug', 'description', 'image', 'price', 'duration',
+            'title', 'slug', 'description', 'image', 'image_upload', 'price', 'duration',
             'start_date', 'end_date', 'meeting_place', 'published', 'created_at', 'updated_at'
         ]
         read_only_fields = ['slug', 'created_at', 'updated_at']
+
+    def _normalize_path(self, raw: str) -> str:
+        if not raw: return ''
+        raw = raw.strip()
+        if raw.startswith('http://') or raw.startswith('https://'): return raw
+        site = getattr(settings, 'SITE_URL', '').rstrip('/')
+        if site and raw.startswith(site): raw = raw[len(site):]
+        raw = re.sub(r'(^/+)', '/', raw)
+        raw = re.sub(r'(\/media\/)+', '/media/', raw)
+        media_prefix = settings.MEDIA_URL.rstrip('/')
+        if not raw.startswith(media_prefix):
+            raw = f"{media_prefix}/{raw.lstrip('/')}"
+        return raw
+
+    def get_image(self, obj):
+        raw = (obj.image or '').strip()
+        if not raw: return ''
+        if raw.startswith('http://') or raw.startswith('https://'): return raw
+        normalized = self._normalize_path(raw)
+        request = self.context.get('request')
+        if request is not None: return request.build_absolute_uri(normalized)
+        site = getattr(settings, 'SITE_URL', '').rstrip('/')
+        if site: return f"{site}{normalized}"
+        return normalized
+
+    def create(self, validated_data):
+        image_file = validated_data.pop('image_upload', None)
+        diploma = super().create(validated_data)
+        if image_file:
+            self._handle_image_upload(diploma, image_file)
+        return diploma
+
+    def update(self, instance, validated_data):
+        image_file = validated_data.pop('image_upload', None)
+        diploma = super().update(instance, validated_data)
+        if image_file:
+            self._handle_image_upload(diploma, image_file)
+        return diploma
+
+    def _handle_image_upload(self, diploma, image_file):
+        try:
+            ext = image_file.name.split('.')[-1]
+            name = f"diplomas/{uuid.uuid4().hex}.{ext}"
+            saved_name = default_storage.save(name, image_file)
+            try:
+                url = default_storage.url(saved_name)
+            except Exception:
+                url = f"{getattr(settings, 'MEDIA_URL', '/media/')}{saved_name}"
+            
+            if url.startswith('/') and getattr(settings, 'SITE_URL', None):
+                url = f"{settings.SITE_URL.rstrip('/')}{url}"
+                
+            diploma.image = url
+            diploma.save()
+        except Exception as e:
+            print(f"Error saving diploma image: {e}")
 
 
 class DiplomaEnrollmentSerializer(serializers.ModelSerializer):

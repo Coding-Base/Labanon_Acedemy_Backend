@@ -3,6 +3,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db.models import Q
@@ -508,3 +509,7 @@ class AnalyticsView(APIView):
             'today_attempts': today_attempts,
             'subjects': list(subjects_data[:10])  # Top 10 subjects
         })
+
+
+
+

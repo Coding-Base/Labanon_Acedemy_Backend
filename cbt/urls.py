@@ -23,4 +23,5 @@ urlpatterns = router.urls + [
     # Admin Endpoints
     path('bulk-upload/', BulkQuestionUploadView.as_view(), name='bulk-upload'),
     path('analytics/', AnalyticsView.as_view(), name='analytics'),
+    
 ]

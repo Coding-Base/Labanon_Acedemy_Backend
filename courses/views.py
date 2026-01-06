@@ -2,6 +2,8 @@ from rest_framework import viewsets, permissions, status, filters
 from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.views import APIView
+from django.core.mail import send_mail
+from rest_framework.permissions import AllowAny
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.core.files.storage import default_storage
 from django.db import models
@@ -765,3 +767,100 @@ class CertificateViewSet(viewsets.ReadOnlyModelViewSet):
         timestamp = timezone.now().strftime('%Y%m%d%H%M%S')
         random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
         return f"CERT-{timestamp}-{random_suffix}"
+    
+
+
+class TutorApplicationView(APIView):
+    """
+    Handles requests for private tutors.
+    Sends an email to the admin with details and a confirmation email to the user.
+    """
+    permission_classes = [AllowAny]  # Allow public access
+
+    def post(self, request):
+        data = request.data
+        
+        # Extract fields
+        full_name = data.get('fullName')
+        email = data.get('email')
+        phone = data.get('whatsappNumber')
+        country = data.get('country')
+        subject = data.get('subject')
+        address = data.get('address')
+        info = data.get('additionalInfo', 'N/A')
+
+        # Basic Validation
+        if not all([full_name, email, phone, country, subject, address]):
+             return Response(
+                 {'detail': 'Please fill in all required fields.'}, 
+                 status=status.HTTP_400_BAD_REQUEST
+             )
+
+        # 1. Prepare Email to Admin (Platform Owner)
+        admin_subject = f"NEW TUTOR REQUEST: {subject} - {full_name}"
+        admin_message = f"""
+        You have received a new request for a private tutor.
+
+        APPLICANT DETAILS
+        ------------------
+        Name: {full_name}
+        Email: {email}
+        WhatsApp: {phone}
+        Country: {country}
+        Residential Address: {address}
+
+        REQUEST DETAILS
+        ----------------
+        Subject/Course: {subject}
+        Additional Info: {info}
+
+        ACTION REQUIRED
+        ----------------
+        Please contact the user via WhatsApp or Email to proceed.
+        """
+
+        # 2. Prepare Confirmation Email to User
+        user_subject = "Request Received - Lebanon Academy"
+        user_message = f"""
+        Dear {full_name},
+
+        Thank you for choosing Lebanon Academy.
+
+        We have received your request for a private tutor in "{subject}". 
+        
+        Our team is currently reviewing your details to match you with the best available expert. We will reach out to you shortly via WhatsApp or Email to finalize the arrangements.
+
+        Best regards,
+        The Lebanon Academy Team
+        """
+
+        try:
+            # Send to Admin
+            # Ensure ADMIN_EMAIL is set in your settings.py or .env, otherwise hardcode or use a default
+            admin_email = getattr(settings, 'ADMIN_EMAIL', settings.DEFAULT_FROM_EMAIL)
+            
+            send_mail(
+                admin_subject,
+                admin_message,
+                settings.DEFAULT_FROM_EMAIL, # From
+                [admin_email],               # To Admin
+                fail_silently=False,
+            )
+            
+            # Send to User
+            send_mail(
+                user_subject,
+                user_message,
+                settings.DEFAULT_FROM_EMAIL, # From
+                [email],                     # To User
+                fail_silently=True,          # Don't crash if user email is invalid
+            )
+            
+            return Response({'detail': 'Application submitted successfully'}, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            print(f"Email sending error: {str(e)}")
+            return Response(
+                {'detail': 'Application received, but failed to send notification emails. We will contact you.'}, 
+                status=status.HTTP_200_OK # Return 200 so frontend shows success even if email service hiccups
+            )

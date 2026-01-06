@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+from datetime import timedelta
 
 # Base directory
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -107,8 +108,24 @@ CORS_ALLOWED_ORIGINS = [
     'http://localhost:5173',
 ]
 
-# Email backend for dev — change to SMTP in production
-EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+# ==================== Email Configuration (Mailgun) ====================
+# Uses Mailgun SMTP if credentials exist in .env, otherwise Console backend
+MAILGUN_USER = os.environ.get('MAILGUN_USER')
+MAILGUN_PASSWORD = os.environ.get('MAILGUN_PASSWORD')
+
+if MAILGUN_USER and MAILGUN_PASSWORD:
+    EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+    EMAIL_HOST = 'smtp.mailgun.org'
+    EMAIL_PORT = 587
+    EMAIL_USE_TLS = True
+    EMAIL_HOST_USER = MAILGUN_USER
+    EMAIL_HOST_PASSWORD = MAILGUN_PASSWORD
+else:
+    # Fallback for development if no mailgun creds provided
+    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+
+DEFAULT_FROM_EMAIL = 'Lebanon Academy <hello@lebanonacademy.ng>'
+ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL', 'admin@lebanonacademy.ng')
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
@@ -118,7 +135,6 @@ REST_FRAMEWORK = {
     ),
 }
 
-from datetime import timedelta
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
@@ -174,6 +190,9 @@ if USE_AWS_S3:
     
     # Default storage backend for file uploads
     DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+    
+    # AWS_S3_DEFAULT_SSE = 'AES256' 
+    AWS_S3_DEFAULT_SSE = os.getenv('AWS_S3_DEFAULT_SSE', 'AES256')
 else:
     # Fallback to local filesystem
     DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
@@ -184,14 +203,6 @@ else:
     CLOUDFRONT_ORIGIN_SECRET = None
     CLOUDFRONT_CUSTOM_AUTH_SECRET = None
 
-
-
-# settings.py
-# AWS_S3_DEFAULT_SSE = 'AES256' 
-AWS_S3_DEFAULT_SSE = os.getenv('AWS_S3_DEFAULT_SSE', 'AES256')
-  # or 'aws:kms' if you want KMS
-# If using aws:kms, also add AWS_S3_KMS_KEY_ID = 'arn:aws:kms:...' (optional)
-
 # ==================== Payment Gateway Configuration ====================
 # Paystack Configuration
 PAYSTACK_SECRET_KEY = os.environ.get('PAYSTACK_SECRET_KEY')
@@ -201,5 +212,3 @@ PAYSTACK_PUBLIC_KEY = os.environ.get('PAYSTACK_PUBLIC_KEY')
 FLUTTERWAVE_SECRET_KEY = os.environ.get('FLUTTERWAVE_SECRET_KEY')
 FLUTTERWAVE_PUBLIC_KEY = os.environ.get('FLUTTERWAVE_PUBLIC_KEY')
 FLUTTERWAVE_ENCRYPTION_KEY = os.environ.get('FLUTTERWAVE_ENCRYPTION_KEY')
-
-

@@ -1,7 +1,8 @@
+# backend/courses/models.py
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
-
+from django.db.models import Avg, Sum  # Added imports for aggregation
 
 class Institution(models.Model):
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='owned_institutions')
@@ -37,6 +38,31 @@ class Course(models.Model):
     def __str__(self):
         return self.title
 
+    # --- Helper Methods for Real Stats ---
+    def get_student_count(self):
+        """Count users who have purchased this course."""
+        return self.enrollments.filter(purchased=True).count()
+
+    def get_average_rating(self):
+        """Calculate average rating from reviews."""
+        avg = self.reviews.aggregate(Avg('rating'))['rating__avg']
+        return round(avg, 1) if avg else 0.0
+
+    def get_ratings_count(self):
+        """Count total reviews."""
+        return self.reviews.count()
+
+    def get_total_duration(self):
+        """Sum up duration of all lessons."""
+        # This sums the 'duration_minutes' field from Lesson model
+        total_minutes = self.modules.aggregate(
+            total=Sum('lessons__duration_minutes')
+        )['total'] or 0
+        
+        hours = total_minutes // 60
+        minutes = total_minutes % 60
+        return f"{int(hours)}h {int(minutes)}m"
+
 
 class Module(models.Model):
     course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='modules')
@@ -65,6 +91,10 @@ class Lesson(models.Model):
     )
     # YouTube embed URL (optional)
     youtube_url = models.URLField(blank=True, null=True)
+    
+    # Added duration field for stat calculation
+    duration_minutes = models.PositiveIntegerField(default=0, help_text="Duration in minutes")
+    
     order = models.PositiveIntegerField(default=0)
 
     class Meta:
@@ -336,3 +366,19 @@ class Certificate(models.Model):
         self.download_count += 1
         self.last_downloaded_at = timezone.now()
         self.save()
+
+
+# Added Review model for ratings
+class Review(models.Model):
+    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='reviews')
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    rating = models.PositiveIntegerField(choices=[(i, i) for i in range(1, 6)]) # 1-5 stars
+    comment = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('course', 'user') # One review per user per course
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.rating} stars for {self.course.title} by {self.user.username}"
