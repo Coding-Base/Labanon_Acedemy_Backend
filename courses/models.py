@@ -1,5 +1,6 @@
 from django.db import models
 from django.conf import settings
+from django.utils import timezone
 
 
 class Institution(models.Model):
@@ -107,6 +108,14 @@ class Payment(models.Model):
         (KIND_UNLOCK, 'Account Unlock'),
     ]
 
+    # Payment provider choices
+    PROVIDER_PAYSTACK = 'paystack'
+    PROVIDER_FLUTTERWAVE = 'flutterwave'
+    PROVIDER_CHOICES = [
+        (PROVIDER_PAYSTACK, 'Paystack'),
+        (PROVIDER_FLUTTERWAVE, 'Flutterwave'),
+    ]
+
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='payments')
     course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='payments', null=True, blank=True)
     diploma = models.ForeignKey('Diploma', on_delete=models.CASCADE, related_name='payments', null=True, blank=True)
@@ -115,13 +124,21 @@ class Payment(models.Model):
     platform_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     creator_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="Amount to course/diploma creator")
     
+    # Payment provider
+    payment_provider = models.CharField(max_length=20, choices=PROVIDER_CHOICES, default=PROVIDER_PAYSTACK)
+    
     # Paystack integration
     paystack_reference = models.CharField(max_length=255, blank=True, null=True, unique=True, help_text="Paystack reference code")
+    
+    # Flutterwave integration
+    flutterwave_reference = models.CharField(max_length=255, blank=True, null=True, unique=True, help_text="Flutterwave tx_ref code")
+    flutterwave_transaction_id = models.CharField(max_length=255, blank=True, null=True, help_text="Flutterwave transaction ID")
+    
     provider_reference = models.CharField(max_length=255, blank=True, null=True)
     
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=PENDING)
     created_at = models.DateTimeField(auto_now_add=True)
-    verified_at = models.DateTimeField(null=True, blank=True, help_text="When Paystack verified the payment")
+    verified_at = models.DateTimeField(null=True, blank=True, help_text="When payment was verified")
 
     def __str__(self):
         return f"Payment {self.id} {self.user} {self.amount} {self.status}"
@@ -254,3 +271,68 @@ class PaystackSubAccount(models.Model):
 
     class Meta:
         verbose_name_plural = "Paystack Sub-accounts"
+
+
+class FlutterwaveSubAccount(models.Model):
+    """Flutterwave sub-account for tutors and institutions to receive payments."""
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='flutterwave_subaccount')
+    
+    # Bank details (required to create sub-account)
+    bank_code = models.CharField(max_length=10, help_text="Bank code from Flutterwave")
+    account_number = models.CharField(max_length=20)
+    account_name = models.CharField(max_length=255)
+    
+    # Flutterwave sub-account reference
+    subaccount_id = models.CharField(max_length=100, blank=True, null=True, unique=True, help_text="Flutterwave subaccount_id")
+    
+    # Status tracking
+    is_active = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    # Error tracking
+    error_message = models.TextField(blank=True, null=True)
+
+    def __str__(self):
+        return f"{self.user.username} - {self.account_number}"
+
+    class Meta:
+        verbose_name_plural = "Flutterwave Sub-accounts"
+
+
+class Certificate(models.Model):
+    """Certificate of completion for courses."""
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='certificates')
+    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='certificates')
+    enrollment = models.OneToOneField(Enrollment, on_delete=models.CASCADE, related_name='certificate', null=True, blank=True)
+    
+    # Certificate details
+    certificate_id = models.CharField(max_length=50, unique=True, help_text="Unique certificate ID")
+    issue_date = models.DateTimeField(auto_now_add=True)
+    completion_date = models.DateField(null=True, blank=True)
+    
+    # Track generation
+    is_downloaded = models.BooleanField(default=False)
+    download_count = models.PositiveIntegerField(default=0)
+    last_downloaded_at = models.DateTimeField(null=True, blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('user', 'course')
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+            models.Index(fields=['certificate_id']),
+        ]
+
+    def __str__(self):
+        return f"Certificate: {self.user.username} - {self.course.title}"
+
+    def mark_downloaded(self):
+        """Mark certificate as downloaded and update download count."""
+        self.is_downloaded = True
+        self.download_count += 1
+        self.last_downloaded_at = timezone.now()
+        self.save()

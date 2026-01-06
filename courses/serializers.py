@@ -3,7 +3,7 @@ from rest_framework import serializers
 from django.conf import settings
 import re
 
-from .models import Institution, Course, Module, Lesson, Enrollment, Payment, CartItem, Diploma, DiplomaEnrollment, Portfolio, PortfolioGalleryItem
+from .models import Institution, Course, Module, Lesson, Enrollment, Payment, CartItem, Diploma, DiplomaEnrollment, Portfolio, PortfolioGalleryItem, Certificate
 
 
 class InstitutionSerializer(serializers.ModelSerializer):
@@ -201,3 +201,20 @@ class PortfolioSerializer(serializers.ModelSerializer):
             'gallery_items', 'created_at', 'updated_at'
         ]
         read_only_fields = ['public_token', 'created_at', 'updated_at', 'gallery_items']
+
+class CertificateSerializer(serializers.ModelSerializer):
+    course_title = serializers.CharField(source='course.title', read_only=True)
+    username = serializers.CharField(source='user.username', read_only=True)
+    user_id = serializers.IntegerField(source='user.id', read_only=True)
+
+    class Meta:
+        model = Certificate
+        fields = [
+            'id', 'user_id', 'username', 'course', 'course_title', 'certificate_id',
+            'issue_date', 'completion_date', 'is_downloaded', 'download_count',
+            'last_downloaded_at', 'created_at', 'updated_at'
+        ]
+        read_only_fields = [
+            'id', 'user_id', 'username', 'certificate_id', 'issue_date',
+            'download_count', 'last_downloaded_at', 'created_at', 'updated_at'
+        ]

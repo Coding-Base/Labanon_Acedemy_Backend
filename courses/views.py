@@ -7,9 +7,9 @@ from django.core.files.storage import default_storage
 from django.db import models
 import uuid
 from rest_framework.permissions import IsAuthenticated
-from django.http import JsonResponse
-from .models import Institution, Course, Module, Lesson, Enrollment, CartItem, Diploma, DiplomaEnrollment, Portfolio, PortfolioGalleryItem
-from .serializers import InstitutionSerializer, CourseSerializer, ModuleSerializer, LessonSerializer, EnrollmentSerializer, CartItemSerializer, DiplomaSerializer, DiplomaEnrollmentSerializer, PortfolioSerializer, PortfolioGalleryItemSerializer
+from django.http import JsonResponse, FileResponse
+from .models import Institution, Course, Module, Lesson, Enrollment, CartItem, Diploma, DiplomaEnrollment, Portfolio, PortfolioGalleryItem, Certificate
+from .serializers import InstitutionSerializer, CourseSerializer, ModuleSerializer, LessonSerializer, EnrollmentSerializer, CartItemSerializer, DiplomaSerializer, DiplomaEnrollmentSerializer, PortfolioSerializer, PortfolioGalleryItemSerializer, CertificateSerializer
 from .permissions import IsCreatorOrTeacherOrAdmin
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -627,3 +627,141 @@ class PortfolioGalleryItemViewSet(viewsets.ModelViewSet):
         if portfolio_id:
             return PortfolioGalleryItem.objects.filter(portfolio_id=portfolio_id).order_by('order')
         return PortfolioGalleryItem.objects.all()
+
+
+class SignatureView(APIView):
+    """
+    View to serve the platform signature image.
+    Used by the certificate generator on the frontend.
+    """
+    def get(self, request):
+        """Serve the signature image from backend root directory."""
+        signature_path = os.path.join(settings.BASE_DIR, 'signature.png')
+        
+        if os.path.exists(signature_path):
+            return FileResponse(
+                open(signature_path, 'rb'),
+                content_type='image/png',
+                as_attachment=False
+            )
+        else:
+            return Response(
+                {'detail': 'Signature image not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+
+class LogoView(APIView):
+    """
+    View to serve the platform logo image.
+    Used by the certificate generator on the frontend.
+    """
+    def get(self, request):
+        """Serve the logo image from backend root directory."""
+        logo_path = os.path.join(settings.BASE_DIR, 'labanonlogo.png')
+        
+        if os.path.exists(logo_path):
+            return FileResponse(
+                open(logo_path, 'rb'),
+                content_type='image/png',
+                as_attachment=False
+            )
+        else:
+            return Response(
+                {'detail': 'Logo image not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+
+class CertificateViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Viewset for retrieving and managing certificates.
+    - Users can view their own certificates
+    - Admin/staff can view all certificates
+    """
+    serializer_class = CertificateSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [filters.OrderingFilter, filters.SearchFilter]
+    search_fields = ['course__title', 'certificate_id']
+    ordering_fields = ['created_at', 'issue_date', 'completion_date']
+    ordering = ['-created_at']
+
+    def get_queryset(self):
+        """Users see only their own certificates. Admin sees all."""
+        user = self.request.user
+        if user.is_staff:
+            return Certificate.objects.all().order_by('-created_at')
+        return Certificate.objects.filter(user=user).order_by('-created_at')
+
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated])
+    def create_certificate(self, request):
+        """
+        Create a new certificate for a course completion.
+        Expects: course_id, completion_date (optional)
+        """
+        course_id = request.data.get('course_id')
+        completion_date = request.data.get('completion_date')
+        
+        if not course_id:
+            return Response(
+                {'detail': 'course_id is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            course = Course.objects.get(id=course_id)
+        except Course.DoesNotExist:
+            return Response(
+                {'detail': 'Course not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Check if user has purchased and completed the course
+        try:
+            enrollment = Enrollment.objects.get(user=request.user, course=course, purchased=True)
+        except Enrollment.DoesNotExist:
+            return Response(
+                {'detail': 'You are not enrolled in this course or have not purchased it'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Check if certificate already exists
+        certificate, created = Certificate.objects.get_or_create(
+            user=request.user,
+            course=course,
+            enrollment=enrollment,
+            defaults={
+                'certificate_id': self._generate_certificate_id(),
+                'completion_date': completion_date if completion_date else timezone.now().date()
+            }
+        )
+
+        serializer = self.get_serializer(certificate)
+        return Response(
+            serializer.data,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK
+        )
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def mark_downloaded(self, request, pk=None):
+        """Mark certificate as downloaded and increment download count."""
+        certificate = self.get_object()
+        
+        # Verify user owns this certificate
+        if certificate.user != request.user and not request.user.is_staff:
+            return Response(
+                {'detail': 'Permission denied'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        certificate.mark_downloaded()
+        serializer = self.get_serializer(certificate)
+        return Response(serializer.data)
+
+    @staticmethod
+    def _generate_certificate_id():
+        """Generate a unique certificate ID."""
+        timestamp = timezone.now().strftime('%Y%m%d%H%M%S')
+        random_suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+        return f"CERT-{timestamp}-{random_suffix}"
