@@ -4,6 +4,7 @@ from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
 )
+from .views import PasswordResetRequestView, PasswordResetConfirmView
 from rest_framework.routers import DefaultRouter
 
 router = DefaultRouter()
@@ -17,7 +18,10 @@ urlpatterns = [
     path('dashboard/', DashboardView.as_view(), name='dashboard'),
     path('change-password/', ChangePasswordView.as_view(), name='change_password'),
     path('profile-update/', ProfileUpdateView.as_view(), name='profile_update'),
+    path('password-reset/', PasswordResetRequestView.as_view(), name='password-reset-request'),
+    path('password-reset-confirm/', PasswordResetConfirmView.as_view(), name='password-reset-confirm'),
 ]
+
 
 urlpatterns += router.urls
 

@@ -39,12 +39,8 @@ class IsInstitutionOwnerOrReadOnly(permissions.BasePermission):
     Custom permission to only allow owners of an institution to edit it.
     """
     def has_object_permission(self, request, view, obj):
-        # Read permissions are allowed to any request,
-        # so we'll always allow GET, HEAD or OPTIONS requests.
         if request.method in permissions.SAFE_METHODS:
             return True
-
-        # Write permissions are only allowed to the owner of the institution or admins.
         return obj.owner == request.user or request.user.is_staff
 
 
@@ -64,7 +60,6 @@ class CourseViewSet(viewsets.ModelViewSet):
     ordering_fields = ['created_at', 'price', 'title']
 
     def get_queryset(self):
-        # Master admin can see all, others see all (read-only logic handled by permissions)
         return Course.objects.all().order_by('-created_at')
 
     def perform_create(self, serializer):
@@ -77,17 +72,17 @@ class CourseViewSet(viewsets.ModelViewSet):
             suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=4))
             slug = f"{base_slug}-{suffix}"
         
-        # FIX: Automatically link the user's institution if they have one
+        # Automatically link the user's institution if they have one
         institution = Institution.objects.filter(owner=self.request.user).first()
         
         serializer.save(
             creator=self.request.user, 
             slug=slug,
-            institution=institution # This ensures future courses are linked correctly
+            institution=institution 
         )
 
 class ModuleViewSet(viewsets.ModelViewSet):
-    queryset = Module.objects.all()
+    queryset = Module.objects.all().order_by('order') # Added order_by
     serializer_class = ModuleSerializer
     permission_classes = [IsCreatorOrTeacherOrAdmin]
 
@@ -98,7 +93,7 @@ class ModuleViewSet(viewsets.ModelViewSet):
         serializer.save()
 
 class LessonViewSet(viewsets.ModelViewSet):
-    queryset = Lesson.objects.all()
+    queryset = Lesson.objects.all().order_by('order') # Added order_by
     serializer_class = LessonSerializer
     permission_classes = [IsCreatorOrTeacherOrAdmin]
 
@@ -158,7 +153,6 @@ class CourseImageUploadView(APIView):
 class InstitutionViewSet(viewsets.ModelViewSet):
     queryset = Institution.objects.all().order_by('-created_at')
     serializer_class = InstitutionSerializer
-    # FIX: Use the new permission class that checks for 'owner' instead of 'creator'
     permission_classes = [permissions.IsAuthenticated, IsInstitutionOwnerOrReadOnly]
     pagination_class = StandardResultsSetPagination
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
@@ -187,13 +181,14 @@ class InstitutionViewSet(viewsets.ModelViewSet):
             )
 
 class EnrollmentViewSet(viewsets.ModelViewSet):
-    queryset = Enrollment.objects.all()
+    queryset = Enrollment.objects.all().order_by('-purchased_at') # Added order_by default
     serializer_class = EnrollmentSerializer
     permission_classes = [permissions.IsAuthenticated]
     pagination_class = StandardResultsSetPagination
 
     def get_queryset(self):
-        return Enrollment.objects.filter(user=self.request.user)
+        # FIX: Added .order_by('-purchased_at') to ensure consistent pagination
+        return Enrollment.objects.filter(user=self.request.user).order_by('-purchased_at')
 
     def perform_create(self, serializer):
         course = serializer.validated_data.get('course')
@@ -268,7 +263,7 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
                 qs = qs.filter(status=params.get('status'))
             return qs
 
-        # 2. Filter by Tutor (if requesting user is that tutor)
+        # 2. Filter by Tutor
         tutor_param = params.get('tutor')
         status_param = params.get('status')
         
@@ -286,12 +281,11 @@ class PaymentViewSet(viewsets.ReadOnlyModelViewSet):
                 pass
             return Payment.objects.none()
 
-        # 3. Filter by Institution (for Institution Dashboard)
+        # 3. Filter by Institution
         institution_param = params.get('course__institution') or params.get('diploma__institution')
         if institution_param:
             try:
                 institution_id = int(institution_param)
-                # Verify ownership
                 Institution.objects.get(id=institution_id, owner=user)
                 
                 qs = Payment.objects.filter(
@@ -481,10 +475,10 @@ class DiplomaEnrollmentViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         if IsMasterAdmin().has_permission(self.request, self):
-            return DiplomaEnrollment.objects.all()
+            return DiplomaEnrollment.objects.all().order_by('-purchased_at') # Added order_by
         return DiplomaEnrollment.objects.filter(
             Q(user=user) | Q(diploma__creator=user)
-        )
+        ).order_by('-purchased_at') # Added order_by
 
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
@@ -515,17 +509,17 @@ class DiplomaEnrollmentViewSet(viewsets.ModelViewSet):
         return Response({'payment_url': fake_payment_url}, status=status.HTTP_200_OK)
 
 class PortfolioViewSet(viewsets.ModelViewSet):
-    queryset = Portfolio.objects.all()
+    queryset = Portfolio.objects.all().order_by('-created_at') # Added order_by default
     serializer_class = PortfolioSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         user = self.request.user
+        
         if IsMasterAdmin().has_permission(self.request, self):
-            return Portfolio.objects.all()
+            return Portfolio.objects.all().order_by('-created_at') # Added order_by
             
-        # Only return the portfolio owned by the current user's institution
-        return Portfolio.objects.filter(institution__owner=user)
+        return Portfolio.objects.filter(institution__owner=user).order_by('-created_at') # Added order_by
 
     @action(detail=False, methods=['get'], permission_classes=[AllowAny])
     def by_token(self, request):
@@ -567,7 +561,7 @@ class PortfolioGalleryItemViewSet(viewsets.ModelViewSet):
         portfolio_id = self.request.query_params.get('portfolio')
         if portfolio_id:
             return PortfolioGalleryItem.objects.filter(portfolio_id=portfolio_id).order_by('order')
-        return PortfolioGalleryItem.objects.all()
+        return PortfolioGalleryItem.objects.all().order_by('order')
 
 class SignatureView(APIView):
     def get(self, request):

@@ -14,6 +14,10 @@ SECRET_KEY = os.environ.get('DJ_SECRET', 'change-me-for-prod')
 DEBUG = os.environ.get('DJ_DEBUG', 'True').lower() in ('1', 'true', 'yes')
 ALLOWED_HOSTS = ['*'] if DEBUG else os.environ.get('DJ_ALLOWED_HOSTS', '').split(',')
 
+# Frontend URL for Password Resets & Email Links
+# This should point to where your React app is running
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:5173').rstrip('/')
+
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -120,6 +124,7 @@ if ANYMAIL["MAILJET_API_KEY"] and ANYMAIL["MAILJET_SECRET_KEY"]:
     EMAIL_BACKEND = "anymail.backends.mailjet.EmailBackend"
 else:
     # Fallback to console backend for development if keys are missing
+    # Emails will print to terminal instead of sending
     EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 
 DEFAULT_FROM_EMAIL = 'Lebanon Academy <lebanonacademy00@gmail.com>'
@@ -146,7 +151,7 @@ DJOSER = {
     # For development convenience we disable required activation so users can login
     'SEND_ACTIVATION_EMAIL': False,
     'ACTIVATION_URL': 'activate/{uid}/{token}',
-    'PASSWORD_RESET_CONFIRM_URL': 'password/reset/confirm/{uid}/{token}',
+    'PASSWORD_RESET_CONFIRM_URL': 'reset-password/{uid}/{token}', 
     'SERIALIZERS': {
         'user_create': 'users.serializers.DjoserUserCreateSerializer',
     }
@@ -159,6 +164,14 @@ PLATFORM_COMMISSION = float(os.environ.get('PLATFORM_COMMISSION', 0.05))
 ADMIN_INVITE_CODE = os.environ.get('ADMIN_INVITE_CODE')
 
 AUTH_USER_MODEL = 'users.User'
+
+# ==================== Authentication Backends (Updated for Email Login) ====================
+# This list tells Django to first check our custom email backend, 
+# then fall back to the standard username backend.
+AUTHENTICATION_BACKENDS = [
+    'users.backends.EmailOrUsernameModelBackend', 
+    'django.contrib.auth.backends.ModelBackend',
+]
 
 # ==================== AWS S3 + CloudFront Configuration ====================
 USE_AWS_S3 = os.environ.get('USE_AWS_S3', 'False').lower() in ('1', 'true', 'yes')
