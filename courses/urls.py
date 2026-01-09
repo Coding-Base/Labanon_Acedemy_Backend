@@ -4,37 +4,46 @@ from .views import (
     CourseViewSet, InstitutionViewSet, EnrollmentViewSet, ModuleViewSet, 
     LessonViewSet, PaymentViewSet, CartItemViewSet, DiplomaViewSet, 
     DiplomaEnrollmentViewSet, PortfolioViewSet, PortfolioGalleryItemViewSet,
-    CertificateViewSet, SignatureView, LogoView,TutorApplicationView
+    CertificateViewSet, SignatureView, LogoView, TutorApplicationView,
+    LessonMediaUploadView, CourseImageUploadView
 )
 from .payment_views import (
     InitiateUnlockView, PaystackWebhookView, InitiatePaymentView, 
     VerifyPaymentView, SubAccountViewSet,
     InitiateFlutterwavePaymentView, VerifyFlutterwavePaymentView, 
-	FlutterwaveWebhookView, FlutterwaveSubAccountViewSet, FlutterwaveListBanksView, FlutterwaveVerifyAccountView
+    FlutterwaveWebhookView, FlutterwaveSubAccountViewSet, 
+    FlutterwaveListBanksView, FlutterwaveVerifyAccountView
 )
-from .views import LessonMediaUploadView
-from .views import CourseImageUploadView
 
 # Custom payment endpoints MUST be defined before router to take precedence
 urlpatterns = [
-	# Signature and logo endpoints for certificates
-	path('signature/', SignatureView.as_view(), name='signature'),
-	path('logo/', LogoView.as_view(), name='logo'),
-	# Paystack Payment endpoints
-	path('payments/initiate/', InitiatePaymentView.as_view(), name='initiate-payment'),
-	path('payments/verify/<str:reference>/', VerifyPaymentView.as_view(), name='verify-payment'),
-	path('payments/webhook/', PaystackWebhookView.as_view(), name='paystack-webhook'),
-	# Flutterwave Payment endpoints
-	path('payments/flutterwave/initiate/', InitiateFlutterwavePaymentView.as_view(), name='initiate-flutterwave-payment'),
-	path('payments/flutterwave/verify/<str:reference>/', VerifyFlutterwavePaymentView.as_view(), name='verify-flutterwave-payment'),
-	path('payments/flutterwave/webhook/', FlutterwaveWebhookView.as_view(), name='flutterwave-webhook'),
-	path('payments/flutterwave/list-banks/', FlutterwaveListBanksView.as_view(), name='flutterwave-list-banks'),
-	path('payments/flutterwave/verify-account/', FlutterwaveVerifyAccountView.as_view(), name='flutterwave-verify-account'),
-	# unlock initiation (user-triggered)
-	path('unlock/initiate/', InitiateUnlockView.as_view(), name='initiate-unlock'),
-	# lesson media upload
+    # Signature and logo endpoints for certificates
+    path('signature/', SignatureView.as_view(), name='signature'),
+    path('logo/', LogoView.as_view(), name='logo'),
+
+    # Paystack Payment endpoints
+    path('payments/initiate/', InitiatePaymentView.as_view(), name='initiate-payment'),
+    path('payments/verify/<str:reference>/', VerifyPaymentView.as_view(), name='verify-payment'),
+    path('payments/webhook/', PaystackWebhookView.as_view(), name='paystack-webhook'),
+
+    # Flutterwave Payment endpoints
+    path('payments/flutterwave/initiate/', InitiateFlutterwavePaymentView.as_view(), name='initiate-flutterwave-payment'),
+    path('payments/flutterwave/verify/<str:reference>/', VerifyFlutterwavePaymentView.as_view(), name='verify-flutterwave-payment'),
+    path('payments/flutterwave/webhook/', FlutterwaveWebhookView.as_view(), name='flutterwave-webhook'),
+    path('payments/flutterwave/list-banks/', FlutterwaveListBanksView.as_view(), name='flutterwave-list-banks'),
+    path('payments/flutterwave/verify-account/', FlutterwaveVerifyAccountView.as_view(), name='flutterwave-verify-account'),
+
+    # Unlock initiation (user-triggered)
+    path('unlock/initiate/', InitiateUnlockView.as_view(), name='initiate-unlock'),
+
+    # Media Uploads
     path('lessons/upload-media/', LessonMediaUploadView.as_view(), name='lesson-media-upload'),
+    
+    # FIX: Added this specific route to match your InstitutionPortfolio frontend call
+    path('course-image-upload/', CourseImageUploadView.as_view(), name='course-image-upload-root'),
     path('courses/upload-image/', CourseImageUploadView.as_view(), name='course-image-upload'),
+
+    # Tutor Application
     path('tutor-application/', TutorApplicationView.as_view(), name='tutor-application'),
 ]
 

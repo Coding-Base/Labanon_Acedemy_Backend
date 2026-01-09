@@ -55,11 +55,36 @@ class DashboardView(APIView):
             data.update({'enrollments_count': enroll_count, 'attempts_count': attempts_count, 'avg_score': float(avg_score) if avg_score else None})
 
         elif role == User.INSTITUTION:
+            # Fix: Ensure we look at owned institutions properly
             inst_qs = user.owned_institutions.all()
             inst_count = inst_qs.count()
-            courses_count = Course.objects.filter(institution__in=inst_qs).count()
-            students_count = User.objects.filter(institution_name__in=[i.name for i in inst_qs]).count()
-            data.update({'institutions_count': inst_count, 'courses_count': courses_count, 'students_count': students_count})
+            
+            # Courses linked to ANY of the user's institutions
+            courses_qs = Course.objects.filter(institution__in=inst_qs)
+            courses_count = courses_qs.count()
+            
+            # Students: Count unique users enrolled in this institution's courses OR diplomas
+            # (Assuming Enrollment and DiplomaEnrollment models exist)
+            student_ids = set()
+            
+            # 1. Students in Online Courses
+            course_students = Enrollment.objects.filter(course__institution__in=inst_qs).values_list('user', flat=True)
+            student_ids.update(course_students)
+            
+            # 2. Students in Diplomas (if applicable)
+            # Assuming DiplomaEnrollment links to Diploma which links to Institution
+            try:
+                from courses.models import DiplomaEnrollment
+                diploma_students = DiplomaEnrollment.objects.filter(diploma__institution__in=inst_qs).values_list('user', flat=True)
+                student_ids.update(diploma_students)
+            except ImportError:
+                pass
+
+            data.update({
+                'institutions_count': inst_count, 
+                'courses_count': courses_count, 
+                'students_count': len(student_ids)
+            })
 
         else:  # researcher or admin
             users_count = User.objects.count()

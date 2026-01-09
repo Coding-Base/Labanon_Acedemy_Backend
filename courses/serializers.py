@@ -1,7 +1,7 @@
 # backend/courses/serializers.py
 from rest_framework import serializers
 from django.conf import settings
-from django.db.models import Avg, Sum # Imported for calculations
+from django.db.models import Avg, Sum 
 from django.core.files.storage import default_storage
 import re
 import uuid
@@ -19,7 +19,10 @@ class InstitutionSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Institution
-        fields = ['id', 'owner_username', 'name', 'description', 'is_active', 'courses_count', 'created_at']
+        fields = [
+            'id', 'owner_username', 'name', 'description', 'is_active', 
+            'courses_count', 'created_at', 'signer_name', 'signer_position','signature_image'
+        ]
         read_only_fields = ['id', 'owner_username', 'courses_count', 'created_at']
 
     def get_courses_count(self, obj):
@@ -39,7 +42,6 @@ class LessonSerializer(serializers.ModelSerializer):
         ]
     
     def get_video_s3_url(self, obj):
-        """Return CloudFront URL if video_s3 exists and is ready."""
         if obj.video_s3 and obj.video_s3.status == 'ready':
             return obj.video_s3.cloudfront_url
         return None
@@ -60,14 +62,11 @@ class CourseSerializer(serializers.ModelSerializer):
     institution_name = serializers.CharField(source='institution.name', read_only=True, allow_null=True)
     slug = serializers.SlugField(read_only=True)
     
-    # Image handling: 'image' is read-only URL, 'image_upload' is write-only File
     image = serializers.SerializerMethodField()
     image_upload = serializers.FileField(write_only=True, required=False)
 
-    # Real Stats Field
     stats = serializers.SerializerMethodField()
 
-    # Scheduled Course Fields - Explicitly optional
     start_date = serializers.DateField(required=False, allow_null=True)
     end_date = serializers.DateField(required=False, allow_null=True)
     meeting_time = serializers.TimeField(required=False, allow_null=True)
@@ -78,25 +77,17 @@ class CourseSerializer(serializers.ModelSerializer):
         model = Course
         fields = [
             'id', 'title', 'slug', 'image', 'image_upload', 'description', 'price', 
-            'published', 'creator', 'creator_username', 'institution_name', 'created_at', 'modules',
-            'stats', # <--- Added stats field
-            # Scheduled Course Fields
+            'published', 'creator', 'creator_username', 
+            'institution', 'institution_name',  # <--- FIXED: Added 'institution' ID here
+            'created_at', 'modules', 'stats', 
             'start_date', 'end_date', 'meeting_time', 'meeting_place', 'meeting_link'
         ]
 
     def get_stats(self, obj):
-        """Calculate real statistics for the course."""
-        # 1. Rating
-        # Assuming Review model has related_name='reviews' to Course
         reviews = obj.reviews.all()
         avg_rating = reviews.aggregate(Avg('rating'))['rating__avg'] or 0
         ratings_count = reviews.count()
-
-        # 2. Students (Purchased Enrollments)
         students_count = obj.enrollments.filter(purchased=True).count()
-
-        # 3. Duration (Sum of lessons duration_minutes)
-        # We query all lessons connected to modules of this course
         total_minutes = Lesson.objects.filter(module__course=obj).aggregate(total=Sum('duration_minutes'))['total'] or 0
         hours = total_minutes // 60
         minutes = total_minutes % 60
@@ -134,7 +125,6 @@ class CourseSerializer(serializers.ModelSerializer):
         return normalized
 
     def create(self, validated_data):
-        """Handle image upload during creation"""
         image_file = validated_data.pop('image_upload', None)
         course = super().create(validated_data)
         if image_file:
@@ -142,7 +132,6 @@ class CourseSerializer(serializers.ModelSerializer):
         return course
 
     def update(self, instance, validated_data):
-        """Handle image upload during update"""
         image_file = validated_data.pop('image_upload', None)
         course = super().update(instance, validated_data)
         if image_file:
@@ -150,7 +139,6 @@ class CourseSerializer(serializers.ModelSerializer):
         return course
 
     def _handle_image_upload(self, course, image_file):
-        """Helper to save image file and update course string field."""
         try:
             ext = image_file.name.split('.')[-1]
             name = f"courses/{uuid.uuid4().hex}.{ext}"
@@ -209,7 +197,6 @@ class DiplomaSerializer(serializers.ModelSerializer):
     institution_name = serializers.CharField(source='institution.name', read_only=True)
     creator_username = serializers.CharField(source='creator.username', read_only=True)
     
-    # Image handling
     image = serializers.SerializerMethodField()
     image_upload = serializers.FileField(write_only=True, required=False)
 

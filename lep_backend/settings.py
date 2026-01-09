@@ -24,6 +24,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'rest_framework',
     'djoser',
+    'anymail',  # Added for Mailjet support
     # cloudinary apps are optional and used only when USE_CLOUDINARY=True
     'cloudinary' if os.environ.get('USE_CLOUDINARY', 'False').lower() in ('1', 'true', 'yes') else None,
     'cloudinary_storage' if os.environ.get('USE_CLOUDINARY', 'False').lower() in ('1', 'true', 'yes') else None,
@@ -108,24 +109,22 @@ CORS_ALLOWED_ORIGINS = [
     'http://localhost:5173',
 ]
 
-# ==================== Email Configuration (Mailgun) ====================
-# Uses Mailgun SMTP if credentials exist in .env, otherwise Console backend
-MAILGUN_USER = os.environ.get('MAILGUN_USER')
-MAILGUN_PASSWORD = os.environ.get('MAILGUN_PASSWORD')
+# ==================== Email Configuration (Mailjet via Anymail) ====================
+# Requires "django-anymail[mailjet]" to be installed
+ANYMAIL = {
+    "MAILJET_API_KEY": os.environ.get('MAILJET_API_KEY'),
+    "MAILJET_SECRET_KEY": os.environ.get('MAILJET_SECRET_KEY'),
+}
 
-if MAILGUN_USER and MAILGUN_PASSWORD:
-    EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-    EMAIL_HOST = 'smtp.mailgun.org'
-    EMAIL_PORT = 587
-    EMAIL_USE_TLS = True
-    EMAIL_HOST_USER = MAILGUN_USER
-    EMAIL_HOST_PASSWORD = MAILGUN_PASSWORD
+if ANYMAIL["MAILJET_API_KEY"] and ANYMAIL["MAILJET_SECRET_KEY"]:
+    EMAIL_BACKEND = "anymail.backends.mailjet.EmailBackend"
 else:
-    # Fallback for development if no mailgun creds provided
+    # Fallback to console backend for development if keys are missing
     EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 
-DEFAULT_FROM_EMAIL = 'Lebanon Academy <hello@lebanonacademy.ng>'
-ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL', 'admin@lebanonacademy.ng')
+DEFAULT_FROM_EMAIL = 'Lebanon Academy <lebanonacademy00@gmail.com>'
+SERVER_EMAIL = 'lebanonacademy00@gmail.com'
+ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL', 'lebanonacademy00@gmail.com')
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 

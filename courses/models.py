@@ -1,8 +1,10 @@
 # backend/courses/models.py
+
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
-from django.db.models import Avg, Sum  # Added imports for aggregation
+from django.db.models import Avg, Sum 
+import uuid
 
 class Institution(models.Model):
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='owned_institutions')
@@ -11,6 +13,11 @@ class Institution(models.Model):
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True, null=True)
 
+    # Added for Certificate Signature Feature
+    signer_name = models.CharField(max_length=255, blank=True, null=True, help_text="Name of the person signing certificates (e.g. Dr. John Doe)")
+    signer_position = models.CharField(max_length=255, blank=True, null=True, help_text="Job title (e.g. Dean of Studies, Registrar)")
+    signature_image = models.CharField(max_length=512, blank=True, null=True, help_text="URL to the uploaded signature image")
+    
     class Meta:
         ordering = ['-created_at']
 
@@ -54,7 +61,6 @@ class Course(models.Model):
 
     def get_total_duration(self):
         """Sum up duration of all lessons."""
-        # This sums the 'duration_minutes' field from Lesson model
         total_minutes = self.modules.aggregate(
             total=Sum('lessons__duration_minutes')
         )['total'] or 0
@@ -81,7 +87,7 @@ class Lesson(models.Model):
     title = models.CharField(max_length=255)
     content = models.TextField(blank=True)
     video = models.CharField(max_length=512, blank=True)  # store Cloudinary public id or remote URL
-    # S3 video reference (optional - can use either video field or video_s3)
+    # S3 video reference (optional)
     video_s3 = models.ForeignKey(
         'videos.Video', 
         on_delete=models.SET_NULL, 
@@ -188,8 +194,7 @@ class CartItem(models.Model):
 
 
 class Diploma(models.Model):
-    """Diploma represents an onsite/in-person learning program offered by an institution.
-    Unlike courses, diplomas don't have lessons/content and are completed in-person."""
+    """Diploma represents an onsite/in-person learning program offered by an institution."""
     institution = models.ForeignKey(Institution, on_delete=models.CASCADE, related_name='diplomas')
     creator = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='diplomas')
     title = models.CharField(max_length=255)
@@ -240,7 +245,6 @@ class Portfolio(models.Model):
     location = models.CharField(max_length=255, blank=True)
     phone = models.CharField(max_length=20, blank=True)
     email = models.EmailField(blank=True)
-    # Hex color (e.g. #0ea5a4) to allow institution to theme their public portfolio
     theme_color = models.CharField(max_length=7, blank=True, default='', help_text='Hex color for portfolio theming')
     published = models.BooleanField(default=False)
     public_token = models.CharField(max_length=32, unique=True, blank=True, help_text="Unique token for public link")
@@ -261,7 +265,7 @@ class Portfolio(models.Model):
 
 
 class PortfolioGalleryItem(models.Model):
-    """Gallery items for institution portfolio (images, videos, achievements, etc)."""
+    """Gallery items for institution portfolio."""
     portfolio = models.ForeignKey(Portfolio, on_delete=models.CASCADE, related_name='gallery_items')
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True)
@@ -276,24 +280,17 @@ class PortfolioGalleryItem(models.Model):
     def __str__(self):
         return f"{self.portfolio.institution.name} - {self.title}"
 
+
 class PaystackSubAccount(models.Model):
-    """Paystack sub-account for tutors and institutions to receive payments."""
+    """Paystack sub-account for tutors and institutions."""
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='paystack_subaccount')
-    
-    # Bank details (required to create sub-account)
     bank_code = models.CharField(max_length=10, help_text="Bank code from Paystack")
     account_number = models.CharField(max_length=20)
     account_name = models.CharField(max_length=255)
-    
-    # Paystack sub-account reference
     subaccount_code = models.CharField(max_length=100, blank=True, null=True, unique=True, help_text="Paystack subaccount_code")
-    
-    # Status tracking
     is_active = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
-    # Error tracking
     error_message = models.TextField(blank=True, null=True)
 
     def __str__(self):
@@ -304,23 +301,15 @@ class PaystackSubAccount(models.Model):
 
 
 class FlutterwaveSubAccount(models.Model):
-    """Flutterwave sub-account for tutors and institutions to receive payments."""
+    """Flutterwave sub-account for tutors and institutions."""
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='flutterwave_subaccount')
-    
-    # Bank details (required to create sub-account)
     bank_code = models.CharField(max_length=10, help_text="Bank code from Flutterwave")
     account_number = models.CharField(max_length=20)
     account_name = models.CharField(max_length=255)
-    
-    # Flutterwave sub-account reference
     subaccount_id = models.CharField(max_length=100, blank=True, null=True, unique=True, help_text="Flutterwave subaccount_id")
-    
-    # Status tracking
     is_active = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-    
-    # Error tracking
     error_message = models.TextField(blank=True, null=True)
 
     def __str__(self):
@@ -335,17 +324,12 @@ class Certificate(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='certificates')
     course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='certificates')
     enrollment = models.OneToOneField(Enrollment, on_delete=models.CASCADE, related_name='certificate', null=True, blank=True)
-    
-    # Certificate details
     certificate_id = models.CharField(max_length=50, unique=True, help_text="Unique certificate ID")
     issue_date = models.DateTimeField(auto_now_add=True)
     completion_date = models.DateField(null=True, blank=True)
-    
-    # Track generation
     is_downloaded = models.BooleanField(default=False)
     download_count = models.PositiveIntegerField(default=0)
     last_downloaded_at = models.DateTimeField(null=True, blank=True)
-    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -361,14 +345,12 @@ class Certificate(models.Model):
         return f"Certificate: {self.user.username} - {self.course.title}"
 
     def mark_downloaded(self):
-        """Mark certificate as downloaded and update download count."""
         self.is_downloaded = True
         self.download_count += 1
         self.last_downloaded_at = timezone.now()
         self.save()
 
 
-# Added Review model for ratings
 class Review(models.Model):
     course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='reviews')
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
@@ -377,7 +359,7 @@ class Review(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        unique_together = ('course', 'user') # One review per user per course
+        unique_together = ('course', 'user')
         ordering = ['-created_at']
 
     def __str__(self):

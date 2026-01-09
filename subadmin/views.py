@@ -8,7 +8,6 @@ from users.permissions import IsMasterAdmin
 
 User = get_user_model()
 
-
 class SubAdminViewSet(viewsets.ModelViewSet):
     """Sub-admin management endpoints"""
     queryset = SubAdmin.objects.all()
@@ -39,7 +38,10 @@ class SubAdminViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Username already exists'}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
+            # Create the User
             user = User.objects.create_user(username=username, password=password, email=email, is_staff=True)
+            
+            # Create the SubAdmin Profile with ALL permissions
             subadmin = SubAdmin.objects.create(
                 created_by=request.user,
                 user=user,
@@ -50,6 +52,7 @@ class SubAdminViewSet(viewsets.ModelViewSet):
                 can_view_payments=request.data.get('can_view_payments', False),
                 can_manage_blog=request.data.get('can_manage_blog', False),
                 can_manage_subadmins=request.data.get('can_manage_subadmins', False),
+                can_view_messages=request.data.get('can_view_messages', False), # <--- Added
             )
             serializer = self.get_serializer(subadmin)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -74,3 +77,18 @@ class SubAdminViewSet(viewsets.ModelViewSet):
         subadmin.delete()
         user.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    # Added Update method to fix permissions on existing accounts
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        
+        # Prevent updating subadmins you didn't create
+        if instance.created_by != request.user:
+             return Response({'error': 'Unauthorized'}, status=status.HTTP_403_FORBIDDEN)
+
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+
+        return Response(serializer.data)

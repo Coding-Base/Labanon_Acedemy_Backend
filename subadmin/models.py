@@ -1,7 +1,6 @@
 from django.db import models
 from django.conf import settings
 
-
 class SubAdmin(models.Model):
     """Sub-admin account with limited dashboard permissions"""
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='created_subadmins')
@@ -15,6 +14,9 @@ class SubAdmin(models.Model):
     can_view_payments = models.BooleanField(default=False)
     can_manage_blog = models.BooleanField(default=False)
     can_manage_subadmins = models.BooleanField(default=False)
+    
+    # ADDED: This was missing but required by your Dashboard
+    can_view_messages = models.BooleanField(default=False)
     
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
