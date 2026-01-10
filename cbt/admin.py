@@ -69,7 +69,7 @@ class ChoiceInline(admin.TabularInline):
 
 @admin.register(Question)
 class QuestionAdmin(admin.ModelAdmin):
-    list_display = ['text_preview', 'subject', 'year', 'choice_count', 'creator']
+    list_display = ['text_preview', 'subject', 'year', 'choice_count', 'creator', 'has_image']
     list_filter = ['subject__exam', 'subject', 'year']
     search_fields = ['text', 'subject__name', 'subject__exam__title']
     readonly_fields = ['created_at', 'updated_at', 'choice_count_display']
@@ -77,7 +77,7 @@ class QuestionAdmin(admin.ModelAdmin):
 
     fieldsets = (
         ('Question Information', {
-            'fields': ('subject', 'text', 'year', 'creator')
+            'fields': ('subject', 'text', 'image', 'year', 'creator')
         }),
         ('Statistics', {
             'fields': ('choice_count_display',),
@@ -104,6 +104,11 @@ class QuestionAdmin(admin.ModelAdmin):
     def choice_count_display(self, obj):
         return obj.choices.count()
     choice_count_display.short_description = 'Total Choices'
+
+    def has_image(self, obj):
+        return bool(obj.image)
+    has_image.boolean = True
+    has_image.short_description = 'Image'
 
 
 @admin.register(Choice)

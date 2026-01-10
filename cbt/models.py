@@ -40,6 +40,7 @@ class Question(models.Model):
     subject = models.ForeignKey(Subject, on_delete=models.CASCADE, related_name='questions')
     creator = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     text = models.TextField()
+    image = models.ImageField(upload_to='cbt_questions/', blank=True, null=True)
     year = models.CharField(max_length=10, blank=True, null=True)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)

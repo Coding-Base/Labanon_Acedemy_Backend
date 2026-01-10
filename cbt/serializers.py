@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import Question, Choice, Exam, ExamAttempt, Subject, StudentAnswer
+import json
 
 
 class ChoiceSerializer(serializers.ModelSerializer):
@@ -9,12 +10,25 @@ class ChoiceSerializer(serializers.ModelSerializer):
 
 
 class QuestionSerializer(serializers.ModelSerializer):
-    choices = ChoiceSerializer(many=True, read_only=True)
+    choices = ChoiceSerializer(many=True, required=False)
 
     class Meta:
         model = Question
-        fields = ['id', 'subject', 'text', 'choices', 'year', 'created_at']
+        fields = ['id', 'subject', 'text', 'image', 'choices', 'year', 'created_at']
         read_only_fields = ['created_at']
+
+    def create(self, validated_data):
+        choices_data = validated_data.pop('choices', [])
+        # Handle choices if passed as JSON string in multipart/form-data
+        if 'choices_json' in self.initial_data:
+            try:
+                choices_data = json.loads(self.initial_data['choices_json'])
+            except: pass
+            
+        question = Question.objects.create(**validated_data)
+        for choice_data in choices_data:
+            Choice.objects.create(question=question, **choice_data)
+        return question
 
 
 class SubjectSerializer(serializers.ModelSerializer):
@@ -46,10 +60,11 @@ class StudentAnswerSerializer(serializers.ModelSerializer):
     question_text = serializers.CharField(source='question.text', read_only=True)
     correct_choice_id = serializers.SerializerMethodField()
     correct_answer = serializers.SerializerMethodField()
+    question_image = serializers.ImageField(source='question.image', read_only=True)
 
     class Meta:
         model = StudentAnswer
-        fields = ['id', 'question', 'question_text', 'selected_choice', 'is_correct', 'correct_choice_id', 'correct_answer', 'answered_at']
+        fields = ['id', 'question', 'question_text', 'question_image', 'selected_choice', 'is_correct', 'correct_choice_id', 'correct_answer', 'answered_at']
         read_only_fields = ['is_correct', 'answered_at']
 
     def get_correct_choice_id(self, obj):
