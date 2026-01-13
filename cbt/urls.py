@@ -3,7 +3,8 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     ExamViewSet, QuestionViewSet, SubjectViewSet, ExamAttemptViewSet, 
     BulkQuestionUploadView, StartExamView, SubmitAnswerView, SubmitExamView,
-    ExamAttemptListView, GetExamQuestionsView, ExamProgressView, AnalyticsView
+    ExamAttemptListView, GetExamQuestionsView, ExamProgressView, AnalyticsView,
+    StudentLeaderboardView
 )
 
 router = DefaultRouter()
@@ -23,5 +24,5 @@ urlpatterns = router.urls + [
     # Admin Endpoints
     path('bulk-upload/', BulkQuestionUploadView.as_view(), name='bulk-upload'),
     path('analytics/', AnalyticsView.as_view(), name='analytics'),
-    
+    path('leaderboard/', StudentLeaderboardView.as_view(), name='student-leaderboard'),
 ]

@@ -1,12 +1,28 @@
 from rest_framework import serializers
 from .models import Question, Choice, Exam, ExamAttempt, Subject, StudentAnswer
+from .math_utils import format_math_question, format_math_choices
 import json
+import re
+
+
+def format_math_text(text):
+    """
+    Format text with math notation for proper rendering.
+    Uses centralized math_utils module.
+    """
+    return format_math_question(text)
 
 
 class ChoiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Choice
         fields = ['id', 'text', 'is_correct']
+    
+    def to_representation(self, instance):
+        """Format choice text with LaTeX when serializing"""
+        data = super().to_representation(instance)
+        data['text'] = format_math_text(data['text'])
+        return data
 
 
 class QuestionSerializer(serializers.ModelSerializer):
@@ -16,6 +32,12 @@ class QuestionSerializer(serializers.ModelSerializer):
         model = Question
         fields = ['id', 'subject', 'text', 'image', 'choices', 'year', 'created_at']
         read_only_fields = ['created_at']
+
+    def to_representation(self, instance):
+        """Format question text with LaTeX when serializing"""
+        data = super().to_representation(instance)
+        data['text'] = format_math_text(data['text'])
+        return data
 
     def create(self, validated_data):
         choices_data = validated_data.pop('choices', [])
@@ -73,7 +95,13 @@ class StudentAnswerSerializer(serializers.ModelSerializer):
 
     def get_correct_answer(self, obj):
         correct_choice = obj.question.choices.filter(is_correct=True).first()
-        return correct_choice.text if correct_choice else None
+        return format_math_text(correct_choice.text) if correct_choice else None
+    
+    def to_representation(self, instance):
+        """Format question and answer text with LaTeX when serializing"""
+        data = super().to_representation(instance)
+        data['question_text'] = format_math_text(data['question_text'])
+        return data
 
 
 class ExamAttemptListSerializer(serializers.ModelSerializer):

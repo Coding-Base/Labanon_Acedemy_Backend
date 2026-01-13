@@ -5,7 +5,7 @@ from .views import (
     LessonViewSet, PaymentViewSet, CartItemViewSet, DiplomaViewSet, 
     DiplomaEnrollmentViewSet, PortfolioViewSet, PortfolioGalleryItemViewSet,
     CertificateViewSet, SignatureView, LogoView, TutorApplicationView,
-    LessonMediaUploadView, CourseImageUploadView
+    LessonMediaUploadView, CourseImageUploadView, TutorsLeaderboardView
 )
 from .payment_views import (
     InitiateUnlockView, PaystackWebhookView, InitiatePaymentView, 
@@ -45,6 +45,9 @@ urlpatterns = [
 
     # Tutor Application
     path('tutor-application/', TutorApplicationView.as_view(), name='tutor-application'),
+    
+    # Leaderboard
+    path('tutors/leaderboard/', TutorsLeaderboardView.as_view(), name='tutors-leaderboard'),
 ]
 
 router = DefaultRouter()

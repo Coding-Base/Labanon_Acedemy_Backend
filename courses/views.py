@@ -18,6 +18,7 @@ import string
 import os
 
 from users.permissions import IsMasterAdmin
+from users.models import User
 from .models import (
     Institution, Course, Module, Lesson, Enrollment, CartItem, 
     Diploma, DiplomaEnrollment, Portfolio, PortfolioGalleryItem, 
@@ -707,3 +708,37 @@ class TutorApplicationView(APIView):
         except Exception as e:
             print(f"Email sending error: {str(e)}")
             return Response({'detail': 'Application received, but failed to send notification emails. We will contact you.'}, status=status.HTTP_200_OK)
+
+
+class TutorsLeaderboardView(APIView):
+    """Get tutors leaderboard based on course sales and performance"""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from django.db.models import Count, Avg
+        
+        limit = int(request.query_params.get('limit', 50))
+        
+        # Get top tutors by total enrollments (sales)
+        tutors_stats = User.objects.filter(
+            role='tutor'
+        ).annotate(
+            total_enrollments=Count('courses__enrollments', distinct=True),
+            courses_count=Count('courses', distinct=True),
+            avg_rating=Avg('courses__reviews__rating')
+        ).order_by('-total_enrollments', '-courses_count')[:limit]
+        
+        # Convert to response format
+        leaderboard_data = [
+            {
+                'id': tutor.id,
+                'username': tutor.username,
+                'name': f"{tutor.first_name} {tutor.last_name}".strip() or tutor.username,
+                'sales': tutor.total_enrollments or 0,
+                'courses_created': tutor.courses_count or 0,
+                'rating': float(tutor.avg_rating or 4.0)
+            }
+            for tutor in tutors_stats
+        ]
+        
+        return Response(leaderboard_data)

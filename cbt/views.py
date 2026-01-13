@@ -21,6 +21,7 @@ from .serializers import (
     ExamAttemptCreateSerializer, StudentAnswerSerializer,
     SubmitAnswerSerializer, SubjectSerializer
 )
+from .math_utils import format_math_question
 from users.permissions import IsMasterAdmin
 
 
@@ -509,10 +510,10 @@ class GetExamQuestionsView(APIView):
             question = answer.question
             questions_data.append({
                 'id': question.id,
-                'text': question.text,
+                'text': format_math_question(question.text),
                 'image': request.build_absolute_uri(question.image.url) if question.image else None,
                 'choices': [
-                    {'id': c.id, 'text': c.text}
+                    {'id': c.id, 'text': format_math_question(c.text)}
                     for c in question.choices.all()
                 ],
                 'user_answer_id': answer.selected_choice.id if answer.selected_choice else None,
@@ -587,3 +588,35 @@ class AnalyticsView(APIView):
             'today_attempts': today_attempts,
             'subjects': list(subjects_data[:10])  # Top 10 subjects
         })
+
+class StudentLeaderboardView(APIView):
+    """Get student leaderboard based on exam scores"""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        from django.db.models import Count, Avg, Max
+        
+        limit = int(request.query_params.get('limit', 50))
+        
+        # Get top students by average score
+        students_stats = ExamAttempt.objects.filter(
+            is_submitted=True
+        ).values('user__id', 'user__username').annotate(
+            avg_score=Avg('score'),
+            high_score=Max('score'),
+            attempts_count=Count('id', distinct=True)
+        ).order_by('-avg_score', '-high_score')[:limit]
+        
+        # Convert to response format
+        leaderboard_data = [
+            {
+                'id': stats['user__id'],
+                'username': stats['user__username'],
+                'avg_score': float(stats['avg_score'] or 0),
+                'high_score': float(stats['high_score'] or 0),
+                'attempts_count': stats['attempts_count']
+            }
+            for stats in students_stats
+        ]
+        
+        return Response(leaderboard_data)
