@@ -12,10 +12,14 @@ from rest_framework import status, viewsets
 from django.conf import settings
 from django.utils import timezone
 from django.db import transaction
+from django.db.models import Q
 from django.core.mail import send_mail
 from django.template.loader import render_to_string # Although we build string manually here for simplicity, good practice is templates
 
-from .models import Payment, Course, Diploma, Enrollment, DiplomaEnrollment, PaystackSubAccount, FlutterwaveSubAccount
+from .models import (
+    Payment, Course, Diploma, Enrollment, DiplomaEnrollment,
+    PaystackSubAccount, FlutterwaveSubAccount, ActivationFee, ActivationUnlock
+)
 from .paystack_utils import PaystackClient, naira_to_kobo, calculate_split, generate_payment_reference, PaystackError
 from .flutterwave_utils import FlutterwaveClient, FlutterwaveError, generate_payment_reference as generate_flutterwave_reference
 from .serializers import PaymentSerializer
@@ -176,13 +180,24 @@ class InitiatePaymentView(APIView):
         item_id = request.data.get('item_id')
         amount = request.data.get('amount')
 
-        if not all([item_type, item_id, amount]):
+        # Basic required fields: item_type and amount. item_id is required
+        # only for course/diploma item types. Allow item_id == 0 for
+        # activation flows (frontend may send 0 as placeholder).
+        if not item_type or amount is None:
             return Response({'detail': 'Missing required fields'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if item_type in ('course', 'diploma') and (item_id is None or str(item_id).strip() == ''):
+            return Response({'detail': 'Missing required fields: item_id required for course/diploma'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             amount = float(amount)
             if amount <= 0:
                 return Response({'detail': 'Amount must be greater than 0'}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Determine kind/item and support activation payments
+            kind = None
+            item = None
+            activation_meta = None
 
             if item_type == 'course':
                 item = Course.objects.get(id=item_id)
@@ -190,11 +205,24 @@ class InitiatePaymentView(APIView):
             elif item_type == 'diploma':
                 item = Diploma.objects.get(id=item_id)
                 kind = Payment.KIND_DIPLOMA
+            elif item_type == 'activation':
+                kind = Payment.KIND_UNLOCK
+                activation_meta = {
+                    'activation_type': request.data.get('activation_type'),
+                    'exam_id': request.data.get('exam_id') or request.data.get('item_id'),
+                    'subject_id': request.data.get('subject_id'),
+                }
             else:
                 return Response({'detail': 'Invalid item_type'}, status=status.HTTP_400_BAD_REQUEST)
 
             amount_decimal = Decimal(str(amount))
-            platform_fee, creator_amount = calculate_split(amount_decimal, platform_percentage=5)
+            # For activation payments platform receives full amount
+            if kind == Payment.KIND_UNLOCK:
+                platform_fee = amount_decimal
+                creator_amount = Decimal('0.00')
+            else:
+                platform_fee, creator_amount = calculate_split(amount_decimal, platform_percentage=5)
+
             payment_reference = generate_payment_reference()
 
             payment_data = {
@@ -209,8 +237,14 @@ class InitiatePaymentView(APIView):
 
             if item_type == 'course':
                 payment_data['course'] = item
-            else:
+            elif item_type == 'diploma':
                 payment_data['diploma'] = item
+            elif item_type == 'activation':
+                # persist activation metadata for later processing
+                try:
+                    payment_data['provider_reference'] = json.dumps(activation_meta)
+                except Exception:
+                    payment_data['provider_reference'] = ''
 
             payment = Payment.objects.create(**payment_data)
 
@@ -222,10 +256,12 @@ class InitiatePaymentView(APIView):
                     'item_id': item_id,
                     'user_id': user.id,
                 }
-                
+                if activation_meta:
+                    metadata['activation'] = activation_meta
+
                 frontend_base = os.getenv('FRONTEND_URL') or 'http://localhost:5173'
                 callback_url = f"{frontend_base}/payment/verify"
-                
+
                 paystack_data = client.initialize_payment(
                     email=user.email,
                     amount=naira_to_kobo(amount),
@@ -289,6 +325,73 @@ class VerifyPaymentView(APIView):
                                     diploma=payment.diploma,
                                     defaults={'purchased': True, 'purchased_at': timezone.now()}
                                 )
+                            # Activation unlocks are handled below using provider transaction metadata
+                            elif payment.kind == Payment.KIND_UNLOCK:
+                                # Create ActivationUnlock record based on provider metadata
+                                try:
+                                    meta = None
+                                    if payment.provider_reference:
+                                        try:
+                                            meta = json.loads(payment.provider_reference)
+                                        except Exception:
+                                            meta = None
+
+                                    tx_meta = transaction_data.get('metadata') or {}
+                                    activation = None
+                                    if isinstance(tx_meta, dict) and tx_meta.get('activation'):
+                                        activation = tx_meta.get('activation')
+                                    elif isinstance(tx_meta, dict) and tx_meta.get('activation_type'):
+                                        # support providers that inline fields directly
+                                        activation = tx_meta
+                                    else:
+                                        activation = meta
+
+                                    exam_identifier = activation.get('exam_id') if activation else None
+                                    subject_id = activation.get('subject_id') if activation else None
+
+                                    # Support account-level activation: mark user as unlocked
+                                    try:
+                                        activation_type = activation.get('activation_type') if activation else None
+                                        if activation_type == 'account':
+                                            try:
+                                                u = payment.user
+                                                u.is_unlocked = True
+                                                u.save()
+                                                logger.info(f"User {u.id} marked as unlocked via account activation payment")
+                                            except Exception as ue:
+                                                logger.error(f"Failed to mark user unlocked: {str(ue)}")
+                                    except Exception:
+                                        pass
+
+                                    if exam_identifier or subject_id:
+                                        ActivationUnlock.objects.get_or_create(
+                                            user=payment.user,
+                                            exam_identifier=str(exam_identifier) if exam_identifier else None,
+                                            subject_id=int(subject_id) if subject_id else None,
+                                            defaults={'payment': payment}
+                                        )
+                                    # Mark account unlocked if activation_type == 'account'
+                                    try:
+                                        activation_type = activation.get('activation_type') if activation else None
+                                        if activation_type == 'account':
+                                            try:
+                                                u = payment.user
+                                                u.is_unlocked = True
+                                                u.save()
+                                            except Exception as ue:
+                                                logger.error(f"Failed to mark user unlocked: {str(ue)}")
+                                    except Exception:
+                                        pass
+                                        # also handle account-level activation via presence of activation_type
+                                        try:
+                                            if activation and activation.get('activation_type') == 'account':
+                                                u = payment.user
+                                                u.is_unlocked = True
+                                                u.save()
+                                        except Exception as e:
+                                            logger.error(f"Failed to mark user unlocked: {str(e)}")
+                                except Exception as e:
+                                    logger.error(f"Failed to create activation unlock: {str(e)}")
                         
                         # Send Emails (Outside atomic block usually, but inside view is fine)
                         send_successful_payment_emails(payment)
@@ -306,6 +409,144 @@ class VerifyPaymentView(APIView):
 
         except Payment.DoesNotExist:
             return Response({'detail': 'Payment not found'}, status=status.HTTP_404_NOT_FOUND)
+
+
+class ActivationFeeView(APIView):
+    """Return activation fee for exam or interview subject.
+
+    Query params:
+    - type: 'exam' or 'interview' (default 'exam')
+    - exam: exam identifier (id or slug)
+    - subject: subject id (for interview)
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        fee_type = request.query_params.get('type', 'exam')
+        exam = request.query_params.get('exam')
+        subject = request.query_params.get('subject')
+
+        try:
+            # Priority: subject-specific, exam-specific, then default global fee for type
+            if subject:
+                fee = ActivationFee.objects.filter(type=ActivationFee.TYPE_INTERVIEW, subject_id=subject).order_by('-updated_at').first()
+            elif exam:
+                fee = ActivationFee.objects.filter(exam_identifier=str(exam)).order_by('-updated_at').first()
+            else:
+                fee = ActivationFee.objects.filter(type=fee_type).order_by('-updated_at').first()
+
+            if not fee:
+                return Response({'amount': None}, status=status.HTTP_200_OK)
+
+            return Response({'amount': float(fee.amount), 'currency': fee.currency}, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Failed to fetch activation fee: {str(e)}")
+            return Response({'detail': 'Error fetching fee'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class ActivationStatusView(APIView):
+    """Check whether current user has unlocked an exam or subject."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        exam = request.query_params.get('exam')
+        subject = request.query_params.get('subject')
+
+        try:
+            user = request.user
+            unlocked = False
+            if subject:
+                # Subject is requested: unlocked if either subject-specific unlock exists
+                # OR the entire exam (exam_identifier) is unlocked for the user.
+                q = Q(user=user, subject_id=subject)
+                if exam:
+                    q = q | Q(user=user, exam_identifier=str(exam))
+                unlocked = ActivationUnlock.objects.filter(q).exists()
+            elif exam:
+                unlocked = ActivationUnlock.objects.filter(user=user, exam_identifier=str(exam)).exists()
+            else:
+                unlocked = False
+
+            return Response({'unlocked': unlocked}, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Activation status check failed: {str(e)}")
+            return Response({'detail': 'Error checking status'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class AdminActivationFeeView(APIView):
+    """Simple admin API to list/create/update activation fees. Restricted to staff users."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not request.user.is_staff:
+            return Response({'detail': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+        fees = ActivationFee.objects.all().order_by('-updated_at')
+        data = []
+        for f in fees:
+            data.append({
+                'id': f.id,
+                'type': f.type,
+                'exam_identifier': f.exam_identifier,
+                'subject_id': f.subject_id,
+                'currency': f.currency,
+                'amount': float(f.amount),
+                'updated_at': f.updated_at,
+                'updated_by': getattr(f.updated_by, 'username', None)
+            })
+        return Response({'results': data})
+
+    def post(self, request):
+        if not request.user.is_staff:
+            return Response({'detail': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            fid = request.data.get('id')
+            ftype = request.data.get('type') or ActivationFee.TYPE_EXAM
+            exam_identifier = request.data.get('exam_identifier')
+            subject_id = request.data.get('subject_id')
+            currency = request.data.get('currency') or 'NGN'
+            amount = request.data.get('amount')
+
+            if amount is None:
+                return Response({'detail': 'amount required'}, status=status.HTTP_400_BAD_REQUEST)
+
+            if fid:
+                fee = ActivationFee.objects.get(id=fid)
+                fee.type = ftype
+                fee.exam_identifier = exam_identifier
+                fee.subject_id = subject_id
+                fee.currency = currency
+                fee.amount = Decimal(str(amount))
+                fee.updated_by = request.user
+                fee.save()
+            else:
+                fee = ActivationFee.objects.create(
+                    type=ftype,
+                    exam_identifier=exam_identifier,
+                    subject_id=subject_id,
+                    currency=currency,
+                    amount=Decimal(str(amount)),
+                    updated_by=request.user
+                )
+
+            return Response({'id': fee.id, 'amount': float(fee.amount), 'currency': fee.currency})
+        except Exception as e:
+            logger.error(f"Admin activation fee error: {str(e)}")
+            return Response({'detail': 'Error saving fee'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def delete(self, request, fee_id=None):
+        if not request.user.is_staff:
+            return Response({'detail': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            if not fee_id:
+                return Response({'detail': 'Fee id required'}, status=status.HTTP_400_BAD_REQUEST)
+            fee = ActivationFee.objects.get(id=fee_id)
+            fee.delete()
+            return Response({'detail': 'deleted'})
+        except ActivationFee.DoesNotExist:
+            return Response({'detail': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            logger.error(f"Failed to delete activation fee: {str(e)}")
+            return Response({'detail': 'Error deleting fee'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class PaystackWebhookView(APIView):
@@ -508,8 +749,13 @@ class InitiateFlutterwavePaymentView(APIView):
         item_id = request.data.get('item_id')
         amount = request.data.get('amount')
 
-        if not all([item_type, item_id, amount]):
+        # For Flutterwave initiation require item_type and amount; require
+        # item_id only for course/diploma (activation not supported here).
+        if not item_type or amount is None:
             return Response({'detail': 'Missing required fields'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if item_type in ('course', 'diploma') and (item_id is None or str(item_id).strip() == ''):
+            return Response({'detail': 'Missing required fields: item_id required for course/diploma'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             amount = float(amount)
@@ -522,11 +768,25 @@ class InitiateFlutterwavePaymentView(APIView):
             elif item_type == 'diploma':
                 item = Diploma.objects.get(id=item_id)
                 kind = Payment.KIND_DIPLOMA
+            elif item_type == 'activation':
+                # Support activation unlocks via Flutterwave as well
+                kind = Payment.KIND_UNLOCK
+                activation_meta = {
+                    'activation_type': request.data.get('activation_type'),
+                    'exam_id': request.data.get('exam_id') or request.data.get('item_id'),
+                    'subject_id': request.data.get('subject_id'),
+                }
             else:
                 return Response({'detail': 'Invalid item_type'}, status=status.HTTP_400_BAD_REQUEST)
 
             amount_decimal = Decimal(str(amount))
-            platform_fee, creator_amount = calculate_split(amount_decimal, platform_percentage=5)
+            if item_type == 'activation' or kind == Payment.KIND_UNLOCK:
+                # platform receives full amount for unlocks
+                platform_fee = amount_decimal
+                creator_amount = Decimal('0.00')
+            else:
+                platform_fee, creator_amount = calculate_split(amount_decimal, platform_percentage=5)
+
             payment_reference = generate_flutterwave_reference()
 
             payment_data = {
@@ -542,8 +802,13 @@ class InitiateFlutterwavePaymentView(APIView):
 
             if item_type == 'course':
                 payment_data['course'] = item
-            else:
+            elif item_type == 'diploma':
                 payment_data['diploma'] = item
+            if item_type == 'activation':
+                try:
+                    payment_data['provider_reference'] = json.dumps(activation_meta)
+                except Exception:
+                    payment_data['provider_reference'] = ''
 
             payment = Payment.objects.create(**payment_data)
 
@@ -555,6 +820,8 @@ class InitiateFlutterwavePaymentView(APIView):
                     'item_id': item_id,
                     'user_id': user.id,
                 }
+                if item_type == 'activation' and activation_meta:
+                    metadata['activation'] = activation_meta
                 
                 frontend_base = os.getenv('FRONTEND_URL') or 'http://localhost:5173'
                 callback_url = f"{frontend_base}/payment/flutterwave/verify"
@@ -624,6 +891,63 @@ class VerifyFlutterwavePaymentView(APIView):
                                     diploma=payment.diploma,
                                     defaults={'purchased': True, 'purchased_at': timezone.now()}
                                 )
+                            elif payment.kind == Payment.KIND_UNLOCK:
+                                # Create ActivationUnlock record based on provider metadata
+                                try:
+                                    meta = None
+                                    if payment.provider_reference:
+                                        try:
+                                            meta = json.loads(payment.provider_reference)
+                                        except Exception:
+                                            meta = None
+
+                                    # Flutterwave may return metadata under 'meta' or 'data.meta'
+                                    tx_meta = transaction_data.get('meta') or transaction_data.get('data', {}).get('meta') or transaction_data.get('metadata') or {}
+                                    activation = None
+                                    if isinstance(tx_meta, dict) and tx_meta.get('activation'):
+                                        activation = tx_meta.get('activation')
+                                    elif isinstance(tx_meta, dict) and tx_meta.get('activation_type'):
+                                        activation = tx_meta
+                                    else:
+                                        activation = meta
+
+                                    exam_identifier = activation.get('exam_id') if activation else None
+                                    subject_id = activation.get('subject_id') if activation else None
+
+                                    if exam_identifier or subject_id:
+                                        ActivationUnlock.objects.get_or_create(
+                                            user=payment.user,
+                                            exam_identifier=str(exam_identifier) if exam_identifier else None,
+                                            subject_id=int(subject_id) if subject_id else None,
+                                            defaults={'payment': payment}
+                                        )
+                                except Exception as e:
+                                    logger.error(f"Failed to create activation unlock (flutterwave verify): {str(e)}")
+                                # Mark account unlocked if activation_type == 'account'
+                                try:
+                                    meta_for_account = None
+                                    if payment.provider_reference:
+                                        try:
+                                            meta_for_account = json.loads(payment.provider_reference)
+                                        except Exception:
+                                            meta_for_account = None
+                                    activation_check = None
+                                    if isinstance(tx_meta, dict) and tx_meta.get('activation'):
+                                        activation_check = tx_meta.get('activation')
+                                    elif isinstance(tx_meta, dict) and tx_meta.get('activation_type'):
+                                        activation_check = tx_meta
+                                    else:
+                                        activation_check = meta_for_account
+
+                                    if activation_check and activation_check.get('activation_type') == 'account':
+                                        try:
+                                            u = payment.user
+                                            u.is_unlocked = True
+                                            u.save()
+                                        except Exception as e:
+                                            logger.error(f"Failed to mark user unlocked (flutterwave verify): {str(e)}")
+                                except Exception:
+                                    pass
                         
                         # Send Emails for Flutterwave Verification
                         send_successful_payment_emails(payment)
@@ -707,6 +1031,64 @@ class FlutterwaveWebhookView(APIView):
                                         diploma=payment.diploma,
                                         defaults={'purchased': True, 'purchased_at': timezone.now()}
                                     )
+                                elif payment.kind == Payment.KIND_UNLOCK:
+                                    # Create ActivationUnlock from webhook payload or stored metadata
+                                    try:
+                                        meta = None
+                                        if payment.provider_reference:
+                                            try:
+                                                meta = json.loads(payment.provider_reference)
+                                            except Exception:
+                                                meta = None
+
+                                        payload_meta = data.get('meta') or data.get('metadata') or {}
+                                        activation = None
+                                        if isinstance(payload_meta, dict) and payload_meta.get('activation'):
+                                            activation = payload_meta.get('activation')
+                                        elif isinstance(payload_meta, dict) and payload_meta.get('activation_type'):
+                                            activation = payload_meta
+                                        else:
+                                            activation = meta
+
+                                        exam_identifier = activation.get('exam_id') if activation else None
+                                        subject_id = activation.get('subject_id') if activation else None
+
+                                        if exam_identifier or subject_id:
+                                            ActivationUnlock.objects.get_or_create(
+                                                user=payment.user,
+                                                exam_identifier=str(exam_identifier) if exam_identifier else None,
+                                                subject_id=int(subject_id) if subject_id else None,
+                                                defaults={'payment': payment}
+                                            )
+                                    except Exception as e:
+                                        logger.error(f"Failed to create activation unlock (flutterwave webhook): {str(e)}")
+                                # Also support marking account unlocked via webhook activation metadata
+                                try:
+                                    meta_for_account = None
+                                    if payment.provider_reference:
+                                        try:
+                                            meta_for_account = json.loads(payment.provider_reference)
+                                        except Exception:
+                                            meta_for_account = None
+
+                                    payload_meta = data.get('meta') or data.get('metadata') or {}
+                                    activation_check = None
+                                    if isinstance(payload_meta, dict) and payload_meta.get('activation'):
+                                        activation_check = payload_meta.get('activation')
+                                    elif isinstance(payload_meta, dict) and payload_meta.get('activation_type'):
+                                        activation_check = payload_meta
+                                    else:
+                                        activation_check = meta_for_account
+
+                                    if activation_check and activation_check.get('activation_type') == 'account':
+                                        try:
+                                            u = payment.user
+                                            u.is_unlocked = True
+                                            u.save()
+                                        except Exception as e:
+                                            logger.error(f"Failed to mark user unlocked (flutterwave webhook): {str(e)}")
+                                except Exception:
+                                    pass
                                 
                                 # Send Emails via Flutterwave Webhook
                                 send_successful_payment_emails(payment)

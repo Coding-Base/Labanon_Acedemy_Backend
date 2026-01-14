@@ -364,3 +364,55 @@ class Review(models.Model):
 
     def __str__(self):
         return f"{self.rating} stars for {self.course.title} by {self.user.username}"
+
+
+class ActivationFee(models.Model):
+    """Admin-configurable activation fees.
+
+    - type: 'exam' (global exam unlock) or 'interview' (per-subject unlock)
+    - exam_identifier: optional identifier (could be numeric id or slug stored as text)
+    - subject_id: optional subject id (for interview subject fees)
+    - currency: ISO code, default 'NGN'
+    - amount: decimal fee
+    """
+    TYPE_EXAM = 'exam'
+    TYPE_INTERVIEW = 'interview'
+    TYPE_CHOICES = [
+        (TYPE_EXAM, 'Exam (global)'),
+        (TYPE_INTERVIEW, 'Interview Subject'),
+    ]
+
+    type = models.CharField(max_length=20, choices=TYPE_CHOICES, default=TYPE_EXAM)
+    exam_identifier = models.CharField(max_length=255, blank=True, null=True, help_text='Exam id or slug for which this fee applies')
+    subject_id = models.IntegerField(blank=True, null=True, help_text='Subject id (for interview subjects)')
+    currency = models.CharField(max_length=8, default='NGN')
+    amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='activation_fee_updates')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        if self.type == self.TYPE_INTERVIEW and self.subject_id:
+            return f"Interview Subject Fee {self.subject_id} - {self.currency} {self.amount}"
+        if self.exam_identifier:
+            return f"Exam Fee {self.exam_identifier} - {self.currency} {self.amount}"
+        return f"Activation Fee {self.currency} {self.amount}"
+
+
+class ActivationUnlock(models.Model):
+    """Records which users have unlocked specific exams or interview subjects via payment."""
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='activations')
+    exam_identifier = models.CharField(max_length=255, blank=True, null=True, help_text='Exam id or slug')
+    subject_id = models.IntegerField(blank=True, null=True)
+    payment = models.ForeignKey(Payment, on_delete=models.SET_NULL, null=True, blank=True, related_name='activations')
+    activated_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = (('user', 'exam_identifier', 'subject_id'),)
+
+    def __str__(self):
+        if self.subject_id:
+            return f"{self.user.username} unlocked subject {self.subject_id}"
+        return f"{self.user.username} unlocked exam {self.exam_identifier}"

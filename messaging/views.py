@@ -5,6 +5,10 @@ from django.db.models import Q
 from django.contrib.auth import get_user_model
 from .models import Message
 from .serializers import MessageSerializer, MessageCreateSerializer, MessageReplySerializer
+from rest_framework.views import APIView
+from rest_framework.permissions import AllowAny
+from django.core.mail import send_mail
+from django.conf import settings
 
 User = get_user_model()
 
@@ -65,12 +69,91 @@ class MessageViewSet(viewsets.ModelViewSet):
                 created.append(msg)
 
             out = MessageSerializer(created, many=True, context={'request': request})
+
+            # Send an email notification to admin(s) for incoming public messages
+            try:
+                admin_emails = list(admins.values_list('email', flat=True)) if admins.exists() else []
+                admin_email = getattr(settings, 'ADMIN_EMAIL', None)
+                if admin_email and admin_email not in admin_emails:
+                    admin_emails.append(admin_email)
+
+                if admin_emails:
+                    subject = f"New Contact Message: {validated.get('subject')}"
+                    plain = validated.get('message')
+                    html = f"<p><strong>From:</strong> {sender.username} ({sender.email})</p><p><strong>Type:</strong> {validated.get('message_type')}</p><p>{validated.get('message')}</p>"
+                    send_mail(subject=subject, message=plain, from_email=settings.DEFAULT_FROM_EMAIL, recipient_list=admin_emails, html_message=html, fail_silently=True)
+            except Exception:
+                pass
+
             return Response(out.data, status=status.HTTP_201_CREATED)
 
         # If recipient was provided, use serializer.save() to create single message
         instance = serializer.save()
         out = MessageSerializer(instance, context={'request': request})
         return Response(out.data, status=status.HTTP_201_CREATED)
+
+
+class ContactAPIView(APIView):
+    """Public contact endpoint for unauthenticated users to reach admin."""
+    permission_classes = [AllowAny]
+    # Skip authentication so public users (no token) can post without triggering
+    # JWT authentication errors (e.g. expired token). Permissions run after
+    # authentication; by clearing authentication_classes we ensure AllowAny
+    # requests are accepted.
+    authentication_classes = []
+
+    def post(self, request):
+        data = request.data
+        name = data.get('name')
+        email = data.get('email')
+        phone = data.get('phone')
+        subject = data.get('subject') or f'Contact from website ({data.get("type")})'
+        message = data.get('message')
+        message_type = data.get('type') or 'contact'
+
+        if not name or not email or not message:
+            return Response({'detail': 'name, email and message are required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Build email
+        admin_email = getattr(settings, 'ADMIN_EMAIL', None)
+        recipients = [admin_email] if admin_email else []
+
+        if not recipients:
+            return Response({'detail': 'No admin email configured'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        html = f"""
+            <p><strong>From:</strong> {name} &lt;{email}&gt;</p>
+            <p><strong>Phone:</strong> {phone or 'N/A'}</p>
+            <p><strong>Type:</strong> {message_type}</p>
+            <hr/>
+            <p>{message}</p>
+        """
+
+        try:
+            send_mail(subject=subject, message=message, from_email=settings.DEFAULT_FROM_EMAIL, recipient_list=recipients, html_message=html, fail_silently=True)
+        except Exception:
+            pass
+
+        # Optionally persist in Message table using master admin as sender so admins see it in inbox
+        try:
+            User = get_user_model()
+            master_admin = User.objects.filter(is_superuser=True).first()
+            if master_admin:
+                # create Message entries for each admin recipient
+                for r in recipients:
+                    admin_user = User.objects.filter(email=r).first()
+                    if admin_user:
+                        Message.objects.create(
+                            sender=master_admin,
+                            recipient=admin_user,
+                            subject=subject,
+                            message=f"From: {name} <{email}>\nPhone: {phone or ''}\n\n{message}",
+                            message_type=Message.MESSAGE_TYPE_CONTACT,
+                        )
+        except Exception:
+            pass
+
+        return Response({'status': 'ok'}, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=['get'])
     def inbox(self, request):
