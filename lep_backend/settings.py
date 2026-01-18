@@ -127,9 +127,9 @@ else:
     # Emails will print to terminal instead of sending
     EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 
-DEFAULT_FROM_EMAIL = 'Lebanon Academy <lebanonacademy00@gmail.com>'
+DEFAULT_FROM_EMAIL = 'LightHub Academy <lighthub18@gmail.com>'
 SERVER_EMAIL = 'lebanonacademy00@gmail.com'
-ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL', 'lebanonacademy00@gmail.com')
+ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL', 'lighthub18@gmail.com')
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 

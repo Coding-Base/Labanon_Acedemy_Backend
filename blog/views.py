@@ -2,6 +2,7 @@ from rest_framework import viewsets, permissions, status
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.utils import timezone
 from .models import Blog, BlogComment, BlogLike, BlogShare
 from .serializers import BlogSerializer, BlogCommentSerializer, BlogLikeSerializer, BlogShareSerializer
@@ -19,6 +20,7 @@ class BlogViewSet(viewsets.ModelViewSet):
     queryset = Blog.objects.all()
     serializer_class = BlogSerializer
     pagination_class = StandardResultsSetPagination
+    parser_classes = (MultiPartParser, FormParser, JSONParser)
 
     def get_queryset(self):
         # Admins see all, others see only published

@@ -121,7 +121,7 @@ class FlutterwaveClient:
             data['meta'] = metadata
         
         data['customizations'] = {
-            'title': 'Lebanon Academy Payment',
+            'title': 'LightHub Academy Payment',
             'description': 'Course/Diploma Purchase'
         }
         

@@ -22,13 +22,14 @@ from users.models import User
 from .models import (
     Institution, Course, Module, Lesson, Enrollment, CartItem, 
     Diploma, DiplomaEnrollment, Portfolio, PortfolioGalleryItem, 
-    Certificate, Payment
+    Certificate, Payment, GospelVideo
 )
 from .serializers import (
     InstitutionSerializer, CourseSerializer, ModuleSerializer, 
     LessonSerializer, EnrollmentSerializer, CartItemSerializer, 
     DiplomaSerializer, DiplomaEnrollmentSerializer, PortfolioSerializer, 
-    PortfolioGalleryItemSerializer, CertificateSerializer, PaymentSerializer
+    PortfolioGalleryItemSerializer, CertificateSerializer, PaymentSerializer,
+    GospelVideoSerializer
 )
 from .permissions import IsCreatorOrTeacherOrAdmin
 from rest_framework.decorators import action
@@ -680,25 +681,25 @@ class TutorApplicationView(APIView):
                 <div style="background-color: #f0fdf4; padding: 15px; border-left: 4px solid #16a34a; border-radius: 4px;"><strong>Additional Info:</strong><br>{info}</div>
                 <br><p>Please contact the applicant via WhatsApp or Email to proceed.</p>
             </div>
-            <div style="{style_footer}">&copy; {timezone.now().year} Lebanon Academy Admin System</div>
+            <div style="{style_footer}">&copy; {timezone.now().year} LightHub Academy Admin System</div>
         </div>"""
         
         admin_plain_message = f"New Tutor Request Received.\nName: {full_name}\nEmail: {email}\nPhone: {phone}\nLevel: {level}\nSubject: {subject}\nLocation: {country}, {address}\nAdditional Info: {info}"
         
-        user_subject = "Request Received - Lebanon Academy"
+        user_subject = "Request Received - LightHub Academy"
         user_html_message = f"""
         <div style="{style_container}">
             <div style="{style_header}"><h2 style="margin:0;">Request Received</h2></div>
             <div style="{style_body}">
                 <p>Dear <strong>{full_name}</strong>,</p>
-                <p>Thank you for choosing <strong>Lebanon Academy</strong>.</p>
+                <p>Thank you for choosing <strong>LightHub Academy</strong>.</p>
                 <p>We have successfully received your request for a private tutor in <strong>{subject}</strong>.</p>
                 <p>Our team is currently reviewing your details to match you with the best available expert. We will reach out to you shortly via <strong>WhatsApp</strong> or <strong>Email</strong> to finalize the arrangements.</p>
-                <br><p>Best regards,<br><strong>The Lebanon Academy Team</strong></p>
+                <br><p>Best regards,<br><strong>The LightHub Academy Team</strong></p>
             </div>
-            <div style="{style_footer}">&copy; {timezone.now().year} Lebanon Academy. All rights reserved.<br><a href="https://lebanonacademy.ng" style="color: #16a34a; text-decoration: none;">Visit Website</a></div>
+            <div style="{style_footer}">&copy; {timezone.now().year} LightHub Academy. All rights reserved.<br><a href="https://lebanonacademy.ng" style="color: #16a34a; text-decoration: none;">Visit Website</a></div>
         </div>"""
-        user_plain_message = f"Dear {full_name},\nThank you for choosing Lebanon Academy. We have received your request for a tutor in {subject}.\nWe will contact you shortly via WhatsApp or Email.\nBest regards,\nThe Lebanon Academy Team"
+        user_plain_message = f"Dear {full_name},\nThank you for choosing LightHub Academy. We have received your request for a tutor in {subject}.\nWe will contact you shortly via WhatsApp or Email.\nBest regards,\nThe LightHub Academy Team"
 
         try:
             admin_email = getattr(settings, 'ADMIN_EMAIL', settings.DEFAULT_FROM_EMAIL)
@@ -742,3 +743,29 @@ class TutorsLeaderboardView(APIView):
         ]
         
         return Response(leaderboard_data)
+
+
+class GospelVideoViewSet(viewsets.ModelViewSet):
+    """Manage gospel videos - only Master Admin can create/edit/delete"""
+    queryset = GospelVideo.objects.all()
+    serializer_class = GospelVideoSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        """Only master admin can create/update/delete; all authenticated users can view"""
+        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+            return [IsMasterAdmin()]
+        return [permissions.IsAuthenticated()]
+
+    def get_queryset(self):
+        return GospelVideo.objects.all().order_by('-updated_at')
+
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
+    def current(self, request):
+        """Get the currently active gospel video"""
+        gospel = GospelVideo.get_active()
+        if gospel:
+            serializer = self.get_serializer(gospel)
+            return Response(serializer.data)
+        return Response(None)
+

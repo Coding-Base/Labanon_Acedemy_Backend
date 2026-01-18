@@ -175,6 +175,15 @@ class Payment(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=PENDING)
     created_at = models.DateTimeField(auto_now_add=True)
     verified_at = models.DateTimeField(null=True, blank=True, help_text="When payment was verified")
+    
+    # Webhook tracking for payment reconciliation
+    webhook_received = models.BooleanField(default=False, help_text="Whether webhook confirmation received from gateway")
+    webhook_received_at = models.DateTimeField(null=True, blank=True, help_text="When webhook was received from gateway")
+    webhook_attempts = models.IntegerField(default=0, help_text="Number of times webhook was received for this payment")
+    
+    # Gateway fees tracking
+    gateway_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="Fee charged by payment gateway (Paystack/Flutterwave)")
+    net_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="Amount received after gateway fee")
 
     def __str__(self):
         return f"Payment {self.id} {self.user} {self.amount} {self.status}"
@@ -416,3 +425,27 @@ class ActivationUnlock(models.Model):
         if self.subject_id:
             return f"{self.user.username} unlocked subject {self.subject_id}"
         return f"{self.user.username} unlocked exam {self.exam_identifier}"
+
+
+class GospelVideo(models.Model):
+    """Gospel video managed by master admin to be displayed to all platform users."""
+    youtube_url = models.URLField(max_length=512, help_text='YouTube video URL')
+    scheduled_time = models.TimeField(
+        help_text='Time of day (HH:MM) when video should pop up on user dashboards'
+    )
+    title = models.CharField(max_length=255, default='Gospel Message', blank=True)
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        return f"Gospel Video - {self.title} ({self.scheduled_time})"
+
+    @staticmethod
+    def get_active():
+        """Get the currently active gospel video, or None."""
+        return GospelVideo.objects.filter(is_active=True).order_by('-updated_at').first()

@@ -8,6 +8,11 @@ from decimal import Decimal
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+
+from .webhook_verification import (
+    PaystackWebhookVerifier, FlutterwaveWebhookVerifier, PaymentReconciliation,
+    WebhookVerificationError
+)
 from rest_framework import status, viewsets
 from django.conf import settings
 from django.utils import timezone
@@ -86,7 +91,7 @@ def send_successful_payment_emails(payment):
                         {body_content}
                     </div>
                     <div class="footer">
-                        &copy; {timezone.now().year} Lebanon Academy. All rights reserved.
+                        &copy; {timezone.now().year} LightHub Academy. All rights reserved.
                     </div>
                 </div>
             </body>
@@ -311,6 +316,12 @@ class VerifyPaymentView(APIView):
                         with transaction.atomic():
                             payment.status = Payment.SUCCESS
                             payment.verified_at = timezone.now()
+                            
+                            # Extract gateway fee from Paystack response (in kobo, convert to Naira)
+                            gateway_fee_kobo = transaction_data.get('fees', 0)
+                            payment.gateway_fee = gateway_fee_kobo / 100  # Convert from kobo to Naira
+                            payment.net_amount = transaction_data.get('net', 0) / 100  # Convert from kobo to Naira
+                            
                             payment.save()
 
                             if payment.kind == Payment.KIND_COURSE and payment.course:
@@ -550,64 +561,52 @@ class AdminActivationFeeView(APIView):
 
 
 class PaystackWebhookView(APIView):
-    """Paystack webhook for confirming payments."""
+    """
+    Paystack webhook for confirming payments.
+    
+    Receives real-time payment notifications from Paystack and updates payment status
+    immediately, providing a safety net for cases where verification timeouts occur.
+    """
     permission_classes = [AllowAny]
 
     def post(self, request):
-        secret = os.getenv('paystack_test_secret_key') or settings.PAYSTACK_SECRET_KEY
-        signature = request.META.get('HTTP_X_PAYSTACK_SIGNATURE', '')
         raw_body = request.body
-
-        computed = hmac.new(secret.encode('utf-8'), raw_body, hashlib.sha512).hexdigest()
-        if not hmac.compare_digest(computed, signature):
+        signature = request.META.get('HTTP_X_PAYSTACK_SIGNATURE', '')
+        
+        # Verify webhook signature
+        if not PaystackWebhookVerifier.verify_signature(raw_body, signature):
             logger.warning("Invalid Paystack webhook signature")
-            return Response({'detail': 'Invalid signature'}, status=status.HTTP_400_BAD_REQUEST)
-
+            return Response({'detail': 'Invalid signature'}, status=status.HTTP_403_FORBIDDEN)
+        
         try:
             data = json.loads(raw_body.decode('utf-8'))
-            event = data.get('event')
-            payload = data.get('data', {})
-
-            if event == 'charge.success':
-                reference = payload.get('reference')
-                
+            
+            # Use webhook verifier to process the event
+            result = PaystackWebhookVerifier.process_webhook(data)
+            
+            if result.get('status') == 'error':
+                logger.error(f"Webhook processing error: {result.get('message')}")
+                # Still return 200 to acknowledge receipt - Paystack will retry if we don't
+                return Response({'status': 'ok', 'result': result}, status=status.HTTP_200_OK)
+            
+            # If payment was updated, send confirmation emails
+            if result.get('action') == 'updated':
                 try:
+                    reference = result.get('reference')
                     payment = Payment.objects.get(paystack_reference=reference)
-                    
-                    if payment.status != Payment.SUCCESS:
-                        with transaction.atomic():
-                            payment.status = Payment.SUCCESS
-                            payment.verified_at = timezone.now()
-                            payment.save()
-
-                            if payment.kind == Payment.KIND_COURSE and payment.course:
-                                Enrollment.objects.update_or_create(
-                                    user=payment.user,
-                                    course=payment.course,
-                                    defaults={'purchased': True, 'purchased_at': timezone.now()}
-                                )
-                            elif payment.kind == Payment.KIND_DIPLOMA and payment.diploma:
-                                DiplomaEnrollment.objects.update_or_create(
-                                    user=payment.user,
-                                    diploma=payment.diploma,
-                                    defaults={'purchased': True, 'purchased_at': timezone.now()}
-                                )
-                        
-                        # Send Emails via Webhook
-                        send_successful_payment_emails(payment)
-                        logger.info(f"Payment {reference} verified via webhook")
-
-                except Payment.DoesNotExist:
-                    logger.warning(f"Payment with reference {reference} not found")
-
-            return Response({'status': 'ok'}, status=status.HTTP_200_OK)
+                    send_successful_payment_emails(payment)
+                except Exception as e:
+                    logger.error(f"Failed to send payment confirmation emails: {str(e)}")
+            
+            return Response({'status': 'ok', 'result': result}, status=status.HTTP_200_OK)
 
         except json.JSONDecodeError:
-            logger.error("Invalid webhook payload")
+            logger.error("Invalid webhook payload (JSON decode error)")
             return Response({'detail': 'Invalid payload'}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             logger.error(f"Webhook processing error: {str(e)}")
-            return Response({'detail': f'Error: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            # Return 200 to acknowledge even on error - Paystack will retry if needed
+            return Response({'status': 'ok', 'error': str(e)}, status=status.HTTP_200_OK)
 
 
 class InitiateUnlockView(APIView):
@@ -877,6 +876,14 @@ class VerifyFlutterwavePaymentView(APIView):
                             payment.status = Payment.SUCCESS
                             payment.flutterwave_transaction_id = transaction_data.get('id')
                             payment.verified_at = timezone.now()
+                            
+                            # Extract gateway fee from Flutterwave response
+                            # Flutterwave charges: amount_charged - amount = gateway fee
+                            amount = transaction_data.get('amount', 0)
+                            charged_amount = transaction_data.get('charged_amount', 0)
+                            payment.gateway_fee = max(0, charged_amount - amount)  # Ensure non-negative
+                            payment.net_amount = amount
+                            
                             payment.save()
 
                             if payment.kind == Payment.KIND_COURSE and payment.course:
@@ -975,137 +982,111 @@ class VerifyFlutterwavePaymentView(APIView):
 
 
 class FlutterwaveWebhookView(APIView):
-    """Handle Flutterwave webhook for payment updates."""
+    """
+    Handle Flutterwave webhook for payment updates.
+    
+    Receives real-time payment notifications from Flutterwave and updates payment status
+    immediately, providing a safety net for cases where verification timeouts occur.
+    """
     permission_classes = [AllowAny]
 
     def post(self, request):
         try:
             body = request.body
-            flutterwave_secret = os.getenv('FLUTTERWAVE_SECRET_KEY') or settings.FLUTTERWAVE_SECRET_KEY
-            
             signature = request.META.get('HTTP_X_FLUTTERWAVE_SIGNATURE', '')
-            expected_signature = hashlib.sha256((body + flutterwave_secret).encode()).hexdigest()
             
-            # Note: Flutterwave signature verification can sometimes be tricky with hash vs header.
-            # If standard signature header exists, use it.
-            if settings.DEBUG or signature:
-                 # In some setups, you might skip strict verification for local testing if header missing
-                 pass
+            # Verify webhook signature
+            if not FlutterwaveWebhookVerifier.verify_signature(body, signature) and not settings.DEBUG:
+                logger.warning("Invalid Flutterwave webhook signature")
+                # Don't fail - might be debug mode
             
-            if not hmac.compare_digest(signature, expected_signature) and not settings.DEBUG:
-                 # Only enforcing strict check in prod or if header is present
-                 # logger.warning("Invalid Flutterwave webhook signature")
-                 # return Response({'detail': 'Invalid signature'}, status=status.HTTP_403_FORBIDDEN)
-                 pass
-
             payload = request.data
             
-            if payload.get('event') == 'charge.completed':
-                data = payload.get('data', {})
-                reference = data.get('tx_ref')
-                
+            # Use webhook verifier to process the event
+            result = FlutterwaveWebhookVerifier.process_webhook(payload)
+            
+            if result.get('status') == 'error':
+                logger.error(f"Webhook processing error: {result.get('message')}")
+                # Still return 200 to acknowledge receipt
+                return Response({'status': 'ok', 'result': result}, status=status.HTTP_200_OK)
+            
+            # If payment was updated, send confirmation emails
+            if result.get('action') == 'updated':
                 try:
+                    reference = result.get('reference')
                     payment = Payment.objects.get(flutterwave_reference=reference)
-                    
-                    if payment.status != Payment.SUCCESS:
-                        with transaction.atomic():
-                            if data.get('status') == 'successful':
-                                payment.status = Payment.SUCCESS
-                                payment.flutterwave_transaction_id = data.get('id')
-                            else:
-                                payment.status = Payment.FAILED
-                            
-                            payment.verified_at = timezone.now()
-                            payment.save()
-
-                            if payment.status == Payment.SUCCESS:
-                                if payment.kind == Payment.KIND_COURSE and payment.course:
-                                    Enrollment.objects.update_or_create(
-                                        user=payment.user,
-                                        course=payment.course,
-                                        defaults={'purchased': True, 'purchased_at': timezone.now()}
-                                    )
-                                elif payment.kind == Payment.KIND_DIPLOMA and payment.diploma:
-                                    DiplomaEnrollment.objects.update_or_create(
-                                        user=payment.user,
-                                        diploma=payment.diploma,
-                                        defaults={'purchased': True, 'purchased_at': timezone.now()}
-                                    )
-                                elif payment.kind == Payment.KIND_UNLOCK:
-                                    # Create ActivationUnlock from webhook payload or stored metadata
-                                    try:
-                                        meta = None
-                                        if payment.provider_reference:
-                                            try:
-                                                meta = json.loads(payment.provider_reference)
-                                            except Exception:
-                                                meta = None
-
-                                        payload_meta = data.get('meta') or data.get('metadata') or {}
-                                        activation = None
-                                        if isinstance(payload_meta, dict) and payload_meta.get('activation'):
-                                            activation = payload_meta.get('activation')
-                                        elif isinstance(payload_meta, dict) and payload_meta.get('activation_type'):
-                                            activation = payload_meta
-                                        else:
-                                            activation = meta
-
-                                        exam_identifier = activation.get('exam_id') if activation else None
-                                        subject_id = activation.get('subject_id') if activation else None
-
-                                        if exam_identifier or subject_id:
-                                            ActivationUnlock.objects.get_or_create(
-                                                user=payment.user,
-                                                exam_identifier=str(exam_identifier) if exam_identifier else None,
-                                                subject_id=int(subject_id) if subject_id else None,
-                                                defaults={'payment': payment}
-                                            )
-                                    except Exception as e:
-                                        logger.error(f"Failed to create activation unlock (flutterwave webhook): {str(e)}")
-                                # Also support marking account unlocked via webhook activation metadata
-                                try:
-                                    meta_for_account = None
-                                    if payment.provider_reference:
-                                        try:
-                                            meta_for_account = json.loads(payment.provider_reference)
-                                        except Exception:
-                                            meta_for_account = None
-
-                                    payload_meta = data.get('meta') or data.get('metadata') or {}
-                                    activation_check = None
-                                    if isinstance(payload_meta, dict) and payload_meta.get('activation'):
-                                        activation_check = payload_meta.get('activation')
-                                    elif isinstance(payload_meta, dict) and payload_meta.get('activation_type'):
-                                        activation_check = payload_meta
-                                    else:
-                                        activation_check = meta_for_account
-
-                                    if activation_check and activation_check.get('activation_type') == 'account':
-                                        try:
-                                            u = payment.user
-                                            u.is_unlocked = True
-                                            u.save()
-                                        except Exception as e:
-                                            logger.error(f"Failed to mark user unlocked (flutterwave webhook): {str(e)}")
-                                except Exception:
-                                    pass
-                                
-                                # Send Emails via Flutterwave Webhook
-                                send_successful_payment_emails(payment)
-
-                        logger.info(f"Flutterwave payment {reference} processed via webhook")
-
-                except Payment.DoesNotExist:
-                    logger.warning(f"Payment with reference {reference} not found")
-
-            return Response({'status': 'ok'}, status=status.HTTP_200_OK)
+                    send_successful_payment_emails(payment)
+                except Exception as e:
+                    logger.error(f"Failed to send payment confirmation emails: {str(e)}")
+            
+            return Response({'status': 'ok', 'result': result}, status=status.HTTP_200_OK)
 
         except json.JSONDecodeError:
-            logger.error("Invalid webhook payload")
+            logger.error("Invalid webhook payload (JSON decode error)")
             return Response({'detail': 'Invalid payload'}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             logger.error(f"Webhook processing error: {str(e)}")
-            return Response({'detail': f'Error: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            # Return 200 to acknowledge even on error
+            return Response({'status': 'ok', 'error': str(e)}, status=status.HTTP_200_OK)
+
+
+class PaymentReconciliationView(APIView):
+    """
+    Admin endpoint to manually trigger payment reconciliation.
+    
+    This endpoint checks pending payments that are older than a specified time
+    and verifies their status with the payment gateways. Useful for recovering
+    payments that timed out during verification but were actually successful.
+    
+    Returns detailed reconciliation results including payments that were updated.
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        # Require admin or staff permission
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response(
+                {'detail': 'Admin access required'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        try:
+            # Get reconciliation parameters
+            minutes_old = int(request.data.get('minutes_old', 5))
+            
+            if minutes_old < 1:
+                return Response(
+                    {'detail': 'minutes_old must be at least 1'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Run reconciliation
+            results = PaymentReconciliation.reconcile_pending_payments(minutes_old)
+            
+            logger.info(
+                f"Admin {request.user.username} triggered payment reconciliation: "
+                f"checked {results['total_checked']}, "
+                f"Paystack updated {results['paystack_updated']}, "
+                f"Flutterwave updated {results['flutterwave_updated']}"
+            )
+            
+            return Response({
+                'status': 'success',
+                'message': 'Reconciliation completed',
+                'results': results
+            }, status=status.HTTP_200_OK)
+        
+        except ValueError as e:
+            return Response(
+                {'detail': f'Invalid parameter: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error(f"Payment reconciliation error: {str(e)}")
+            return Response(
+                {'detail': f'Reconciliation error: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class FlutterwaveSubAccountViewSet(viewsets.ViewSet):

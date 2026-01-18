@@ -5,14 +5,15 @@ from .views import (
     LessonViewSet, PaymentViewSet, CartItemViewSet, DiplomaViewSet, 
     DiplomaEnrollmentViewSet, PortfolioViewSet, PortfolioGalleryItemViewSet,
     CertificateViewSet, SignatureView, LogoView, TutorApplicationView,
-    LessonMediaUploadView, CourseImageUploadView, TutorsLeaderboardView
+    LessonMediaUploadView, CourseImageUploadView, TutorsLeaderboardView,
+    GospelVideoViewSet
 )
 from .payment_views import (
     InitiateUnlockView, PaystackWebhookView, InitiatePaymentView, 
     VerifyPaymentView, SubAccountViewSet, ActivationFeeView, ActivationStatusView, AdminActivationFeeView,
     InitiateFlutterwavePaymentView, VerifyFlutterwavePaymentView, 
     FlutterwaveWebhookView, FlutterwaveSubAccountViewSet, 
-    FlutterwaveListBanksView, FlutterwaveVerifyAccountView
+    FlutterwaveListBanksView, FlutterwaveVerifyAccountView, PaymentReconciliationView
 )
 
 # Custom payment endpoints MUST be defined before router to take precedence
@@ -36,6 +37,9 @@ urlpatterns = [
     path('payments/flutterwave/webhook/', FlutterwaveWebhookView.as_view(), name='flutterwave-webhook'),
     path('payments/flutterwave/list-banks/', FlutterwaveListBanksView.as_view(), name='flutterwave-list-banks'),
     path('payments/flutterwave/verify-account/', FlutterwaveVerifyAccountView.as_view(), name='flutterwave-verify-account'),
+
+    # Payment reconciliation endpoint (admin only)
+    path('payments/admin/reconcile/', PaymentReconciliationView.as_view(), name='reconcile-payments'),
 
     # Unlock initiation (user-triggered)
     path('unlock/initiate/', InitiateUnlockView.as_view(), name='initiate-unlock'),
@@ -69,5 +73,6 @@ router.register(r'portfolio-gallery', PortfolioGalleryItemViewSet, basename='por
 router.register(r'certificates', CertificateViewSet, basename='certificate')
 router.register(r'subaccounts', SubAccountViewSet, basename='subaccount')
 router.register(r'flutterwave-subaccounts', FlutterwaveSubAccountViewSet, basename='flutterwave-subaccount')
+router.register(r'gospel-videos', GospelVideoViewSet, basename='gospel-video')
 
 urlpatterns += router.urls

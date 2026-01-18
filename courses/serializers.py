@@ -10,7 +10,7 @@ import os
 from .models import (
     Institution, Course, Module, Lesson, Enrollment, Payment, 
     CartItem, Diploma, DiplomaEnrollment, Portfolio, 
-    PortfolioGalleryItem, Certificate, Review
+    PortfolioGalleryItem, Certificate, Review, GospelVideo
 )
 
 class InstitutionSerializer(serializers.ModelSerializer):
@@ -170,15 +170,29 @@ class EnrollmentSerializer(serializers.ModelSerializer):
 class PaymentSerializer(serializers.ModelSerializer):
     course_title = serializers.CharField(source='course.title', read_only=True, allow_null=True)
     diploma_title = serializers.CharField(source='diploma.title', read_only=True, allow_null=True)
+    gateway = serializers.CharField(source='payment_provider', read_only=True)
+    reference = serializers.SerializerMethodField()
+    merchant_fee = serializers.DecimalField(source='platform_fee', max_digits=10, decimal_places=2, read_only=True)
+    gateway_fee = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    net_amount = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
 
     class Meta:
         model = Payment
         fields = [
             'id', 'user', 'course', 'course_title', 'diploma', 'diploma_title',
             'amount', 'kind', 'platform_fee', 'creator_amount', 'paystack_reference',
-            'provider_reference', 'status', 'created_at', 'verified_at'
+            'provider_reference', 'payment_provider', 'gateway', 'reference', 'merchant_fee',
+            'gateway_fee', 'net_amount', 'status', 'created_at', 'verified_at'
         ]
-        read_only_fields = ['platform_fee', 'creator_amount', 'status', 'created_at', 'verified_at']
+        read_only_fields = ['platform_fee', 'creator_amount', 'gateway_fee', 'net_amount', 'status', 'created_at', 'verified_at']
+
+    def get_reference(self, obj):
+        """Return the appropriate reference based on payment provider"""
+        if obj.payment_provider == 'paystack':
+            return obj.paystack_reference
+        elif obj.payment_provider == 'flutterwave':
+            return obj.flutterwave_reference or obj.flutterwave_transaction_id
+        return obj.provider_reference
 
 
 class CartItemSerializer(serializers.ModelSerializer):
@@ -314,3 +328,13 @@ class CertificateSerializer(serializers.ModelSerializer):
             'id', 'user_id', 'username', 'certificate_id', 'issue_date',
             'download_count', 'last_downloaded_at', 'created_at', 'updated_at'
         ]
+
+
+class GospelVideoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = GospelVideo
+        fields = [
+            'id', 'youtube_url', 'scheduled_time', 'title', 'description',
+            'is_active', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']

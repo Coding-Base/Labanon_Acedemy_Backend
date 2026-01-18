@@ -237,7 +237,7 @@ class StudentAnswerAdmin(admin.ModelAdmin):
 
 
 # Customize admin site
-admin.site.site_header = 'Lebanon Academy Administration'
+admin.site.site_header = 'LightHub Academy Administration'
 admin.site.site_title = 'Admin'
 # Add custom URLs to admin site
 def get_admin_urls():

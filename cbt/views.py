@@ -123,7 +123,13 @@ class BulkQuestionUploadView(APIView):
 
         if not questions_list:
             return Response(
-                {'detail': 'questions array is required'},
+                {'detail': 'questions array is required and cannot be empty'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not isinstance(questions_list, list):
+            return Response(
+                {'detail': 'questions must be an array'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
@@ -212,24 +218,51 @@ class BulkQuestionUploadView(APIView):
         created_questions = []
         errors = []
 
-        for q_data in questions_list:
+        if not questions_list:
+            return Response({
+                'success': 0,
+                'total': 0,
+                'created': [],
+                'errors': ['No valid questions found in the upload'],
+                'exam': exam.title,
+                'year': year
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        for idx, q_data in enumerate(questions_list, 1):
             try:
-                question_text = q_data.get('question_text')
+                question_text = q_data.get('question_text', '').strip()
                 options = q_data.get('options', {})
-                correct_answer = q_data.get('correct_answer')
-                explanation = q_data.get('explanation', '')
-                question_id = q_data.get('id', '')
+                correct_answer = str(q_data.get('correct_answer', '')).strip().upper()
+                explanation = q_data.get('explanation', '').strip()
+                question_id = q_data.get('id', f'Question {idx}')
 
+                # Validate question_text
                 if not question_text:
-                    errors.append(f"Question {question_id}: question_text is required")
+                    errors.append(f"{question_id}: Question text is required")
                     continue
 
-                if not options or len(options) < 2:
-                    errors.append(f"Question {question_id}: At least 2 options are required")
+                # Validate options
+                if not options or not isinstance(options, dict):
+                    errors.append(f"{question_id}: Options must be a dictionary with at least 2 options")
                     continue
 
+                if len(options) < 2:
+                    errors.append(f"{question_id}: At least 2 options are required (got {len(options)})")
+                    continue
+
+                # Filter empty options
+                options = {k: v for k, v in options.items() if v and str(v).strip()}
+                if len(options) < 2:
+                    errors.append(f"{question_id}: At least 2 non-empty options are required")
+                    continue
+
+                # Validate correct_answer
                 if not correct_answer:
-                    errors.append(f"Question {question_id}: correct_answer is required")
+                    errors.append(f"{question_id}: correct_answer is required")
+                    continue
+
+                if correct_answer not in options:
+                    errors.append(f"{question_id}: correct_answer '{correct_answer}' must be one of {list(options.keys())}")
                     continue
 
                 # Create question
@@ -242,10 +275,10 @@ class BulkQuestionUploadView(APIView):
 
                 # Create choices
                 for option_key, option_text in options.items():
-                    is_correct = option_key.upper() == correct_answer.upper()
+                    is_correct = str(option_key).upper() == correct_answer
                     Choice.objects.create(
                         question=question,
-                        text=option_text,
+                        text=str(option_text).strip(),
                         is_correct=is_correct
                     )
 
@@ -255,7 +288,17 @@ class BulkQuestionUploadView(APIView):
                 })
 
             except Exception as e:
-                errors.append(f"Question {q_data.get('id', 'unknown')}: {str(e)}")
+                errors.append(f"{q_data.get('id', f'Question {idx}')}: {str(e)}")
+
+        if not created_questions:
+            return Response({
+                'success': 0,
+                'total': len(questions_list),
+                'created': [],
+                'errors': errors,
+                'exam': exam.title,
+                'year': year
+            }, status=status.HTTP_400_BAD_REQUEST)
 
         return Response({
             'success': len(created_questions),
