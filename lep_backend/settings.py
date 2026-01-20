@@ -1,4 +1,6 @@
 import os
+import tempfile  # Added for CloudFront key handling
+import dj_database_url  # Added for Database handling
 from pathlib import Path
 from dotenv import load_dotenv
 from datetime import timedelta
@@ -12,10 +14,13 @@ load_dotenv(BASE_DIR / '.env')
 # Minimal settings for local development
 SECRET_KEY = os.environ.get('DJ_SECRET', 'change-me-for-prod')
 DEBUG = os.environ.get('DJ_DEBUG', 'True').lower() in ('1', 'true', 'yes')
-ALLOWED_HOSTS = ['*'] if DEBUG else os.environ.get('DJ_ALLOWED_HOSTS', '').split(',')
+
+# ==================== Allowed Hosts ====================
+# In production, this splits the comma-separated list from Dokploy
+ALLOWED_HOSTS = ['*'] if DEBUG else os.environ.get('ALLOWED_HOSTS', '').split(',')
+
 
 # Frontend URL for Password Resets & Email Links
-# This should point to where your React app is running
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:5173').rstrip('/')
 
 INSTALLED_APPS = [
@@ -47,6 +52,7 @@ INSTALLED_APPS = [a for a in INSTALLED_APPS if a]
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware', # Recommended for static files in Prod
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -76,12 +82,37 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'lep_backend.wsgi.application'
 
+# ==================== Database Configuration ====================
+# Checks for DATABASE_URL env var (Dokploy). If not found, uses SQLite (Local).
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
+    'default': dj_database_url.config(
+        default=f"sqlite:///{BASE_DIR / 'db.sqlite3'}",
+        conn_max_age=600
+    )
 }
+
+# ==================== Redis Configuration ====================
+# Uses the REDIS_URL from Dokploy (redis://lighthub-redis:6379/0)
+REDIS_URL = os.environ.get('REDIS_URL')
+
+if REDIS_URL:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django_redis.cache.RedisCache',
+            'LOCATION': REDIS_URL,
+            'OPTIONS': {
+                'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            }
+        }
+    }
+else:
+    # Fallback to local memory if no Redis
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        }
+    }
+
 
 AUTH_PASSWORD_VALIDATORS = []
 
@@ -91,6 +122,7 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles' # Required for production collection
 
 # Media settings
 MEDIA_URL = '/media/'
@@ -107,11 +139,24 @@ else:
     # local filesystem for development
     DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
 
-# CORS for frontend dev server (Vite default port 5173)
+# ==================== CORS & CSRF Settings ====================
 CORS_ALLOW_ALL_ORIGINS = False
+
+# Combine local dev URL with any production URLs provided in env
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:5173',
+    'http://localhost:3000',
+    'https://lighthubacademy.cloud',
 ]
+
+# If CORS_ALLOWED_ORIGINS is passed in Env, append them
+env_cors = os.environ.get('CORS_ALLOWED_ORIGINS')
+if env_cors:
+    CORS_ALLOWED_ORIGINS.extend(env_cors.split(','))
+
+# CRITICAL for production HTTPS (Traefik Proxy)
+CSRF_TRUSTED_ORIGINS = os.environ.get('CSRF_TRUSTED_ORIGINS', 'http://localhost:5173').split(',')
+
 
 # ==================== Email Configuration (Mailjet via Anymail) ====================
 # Requires "django-anymail[mailjet]" to be installed
@@ -128,7 +173,7 @@ else:
     EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 
 DEFAULT_FROM_EMAIL = 'LightHub Academy <lighthub18@gmail.com>'
-SERVER_EMAIL = 'lebanonacademy00@gmail.com'
+SERVER_EMAIL = 'lighthub18@gmail.com'
 ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL', 'lighthub18@gmail.com')
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
@@ -165,9 +210,7 @@ ADMIN_INVITE_CODE = os.environ.get('ADMIN_INVITE_CODE')
 
 AUTH_USER_MODEL = 'users.User'
 
-# ==================== Authentication Backends (Updated for Email Login) ====================
-# This list tells Django to first check our custom email backend, 
-# then fall back to the standard username backend.
+# ==================== Authentication Backends ====================
 AUTHENTICATION_BACKENDS = [
     'users.backends.EmailOrUsernameModelBackend', 
     'django.contrib.auth.backends.ModelBackend',
@@ -184,10 +227,25 @@ if USE_AWS_S3:
     AWS_STORAGE_BUCKET_NAME = os.environ.get('AWS_STORAGE_BUCKET_NAME')
     
     # CloudFront Configuration
-    CLOUDFRONT_DOMAIN = os.environ.get('CLOUDFRONT_DOMAIN')  # e.g., d123456abcdef.cloudfront.net
+    CLOUDFRONT_DOMAIN = os.environ.get('CLOUDFRONT_DOMAIN')
     CLOUDFRONT_DISTRIBUTION_ID = os.environ.get('CLOUDFRONT_DISTRIBUTION_ID')
     CLOUDFRONT_KEY_PAIR_ID = os.environ.get('CLOUDFRONT_KEY_PAIR_ID')
-    CLOUDFRONT_PRIVATE_KEY_PATH = os.environ.get('CLOUDFRONT_PRIVATE_KEY_PATH')
+
+    # --- CLOUDFRONT KEY LOGIC (UPDATED FOR DOKPLOY) ---
+    # 1. Try to get the raw content (Production Env Var)
+    CLOUDFRONT_KEY_CONTENT = os.environ.get('CLOUDFRONT_PRIVATE_KEY_CONTENT')
+    # 2. Try to get the local path (Development .env)
+    CLOUDFRONT_KEY_PATH_DEV = os.environ.get('CLOUDFRONT_PRIVATE_KEY_PATH')
+
+    if CLOUDFRONT_KEY_CONTENT:
+        # PRODUCTION: Write content to a temporary file
+        with tempfile.NamedTemporaryFile(mode='w', delete=False) as key_file:
+            key_file.write(CLOUDFRONT_KEY_CONTENT)
+            CLOUDFRONT_PRIVATE_KEY_PATH = key_file.name
+    else:
+        # DEVELOPMENT: Use the file path
+        CLOUDFRONT_PRIVATE_KEY_PATH = CLOUDFRONT_KEY_PATH_DEV
+    # --------------------------------------------------
     
     # CloudFront Custom Headers for Security
     CLOUDFRONT_ORIGIN_SECRET = os.environ.get('CLOUDFRONT_ORIGIN_SECRET')
@@ -203,7 +261,6 @@ if USE_AWS_S3:
     # Default storage backend for file uploads
     DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
     
-    # AWS_S3_DEFAULT_SSE = 'AES256' 
     AWS_S3_DEFAULT_SSE = os.getenv('AWS_S3_DEFAULT_SSE', 'AES256')
 else:
     # Fallback to local filesystem
