@@ -147,6 +147,8 @@ CORS_ALLOWED_ORIGINS = [
     'http://localhost:5173',
     'http://localhost:3000',
     'https://lighthubacademy.cloud',
+    'https://api.lighthubacademy.cloud',
+    'https://encoder.lighthubacademy.cloud',
 ]
 
 # If CORS_ALLOWED_ORIGINS is passed in Env, append them
