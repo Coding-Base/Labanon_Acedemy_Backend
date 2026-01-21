@@ -10,18 +10,23 @@ import uuid
 from django.conf import settings
 
 # Initialize Redis connection for encoding queue (DB 1)
-redis_host = os.getenv('REDIS_HOST', 'localhost')
-redis_port = int(os.getenv('REDIS_PORT', 6379))
-redis_password = os.getenv('REDIS_PASSWORD', None)
-
-# Main backend uses DB 0, EncodingBackend uses DB 1 for encoding queue
-redis_client = redis.Redis(
-    host=redis_host,
-    port=redis_port,
-    db=1,
-    password=redis_password,
-    decode_responses=True
-)
+# Prefer REDIS_URL (set by Dokploy). Fall back to REDIS_HOST/PORT if needed.
+redis_url = os.getenv('REDIS_URL') or os.getenv('CELERY_BROKER_URL')
+if redis_url:
+    try:
+        # Use DB 1 for encoding queue regardless of provided URL
+        redis_client = redis.from_url(redis_url, db=1, decode_responses=True)
+    except Exception:
+        # Fallback to simple Redis client if parsing fails
+        redis_host = os.getenv('REDIS_HOST', 'localhost')
+        redis_port = int(os.getenv('REDIS_PORT', 6379))
+        redis_password = os.getenv('REDIS_PASSWORD', None)
+        redis_client = redis.Redis(host=redis_host, port=redis_port, db=1, password=redis_password, decode_responses=True)
+else:
+    redis_host = os.getenv('REDIS_HOST', 'localhost')
+    redis_port = int(os.getenv('REDIS_PORT', 6379))
+    redis_password = os.getenv('REDIS_PASSWORD', None)
+    redis_client = redis.Redis(host=redis_host, port=redis_port, db=1, password=redis_password, decode_responses=True)
 
 # Encoding queue name
 ENCODING_QUEUE = 'video_encoding_queue'
