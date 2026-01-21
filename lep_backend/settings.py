@@ -84,8 +84,19 @@ DATABASES = {
     )
 }
 
-# ==================== Redis ====================
-REDIS_URL = os.environ.get('REDIS_URL')
+# ==================== Redis & Celery ====================
+# This will now pick up the full connection string from Dokploy
+REDIS_URL = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+
+# Configure Celery to use the Redis URL
+CELERY_BROKER_URL = REDIS_URL
+CELERY_RESULT_BACKEND = REDIS_URL
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'UTC'
+
+# Configure Django Cache to use the Redis URL
 if REDIS_URL:
     CACHES = {
         'default': {
@@ -153,13 +164,11 @@ SERVER_EMAIL = 'lighthub18@gmail.com'
 ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL', 'lighthub18@gmail.com')
 
 # Invite code used to allow registration of master admin accounts
-# Set this in the server environment (e.g. in your .env) as `ADMIN_INVITE_CODE`.
 ADMIN_INVITE_CODE = os.environ.get('ADMIN_INVITE_CODE')
 if ADMIN_INVITE_CODE:
     ADMIN_INVITE_CODE = ADMIN_INVITE_CODE.strip() or None
 
 # Frontend base URL used in emails and password reset links
-# Set `FRONTEND_URL` in the server environment (e.g. https://lighthubacademy.cloud)
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://lighthubacademy.cloud')
 if FRONTEND_URL:
     FRONTEND_URL = FRONTEND_URL.strip()
