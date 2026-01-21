@@ -158,6 +158,12 @@ ADMIN_INVITE_CODE = os.environ.get('ADMIN_INVITE_CODE')
 if ADMIN_INVITE_CODE:
     ADMIN_INVITE_CODE = ADMIN_INVITE_CODE.strip() or None
 
+# Frontend base URL used in emails and password reset links
+# Set `FRONTEND_URL` in the server environment (e.g. https://lighthubacademy.cloud)
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://lighthubacademy.cloud')
+if FRONTEND_URL:
+    FRONTEND_URL = FRONTEND_URL.strip()
+
 
 # ==================== DRF & Djoser ====================
 REST_FRAMEWORK = {
