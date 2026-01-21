@@ -127,7 +127,12 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.environ.get('MEDIA_ROOT', str(BASE_DIR / 'media'))
 
+# Storage Configuration
+# Priority: Cloudinary > Filesystem (S3 is only for videos via explicit storage class)
 USE_CLOUDINARY = os.environ.get('USE_CLOUDINARY', 'False').lower() in ('1', 'true', 'yes')
+USE_AWS_S3 = os.environ.get('USE_AWS_S3', 'False').lower() in ('1', 'true', 'yes')
+
+# Default storage for general media (images, documents, etc.) - NOT videos
 if USE_CLOUDINARY:
     DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
 else:
@@ -205,7 +210,9 @@ AUTHENTICATION_BACKENDS = [
 ]
 
 # ==================== AWS CloudFront ====================
-USE_AWS_S3 = os.environ.get('USE_AWS_S3', 'False').lower() in ('1', 'true', 'yes')
+# NOTE: AWS S3 is used ONLY for videos, not for general media files like images
+# Videos use explicit VideoS3Storage class in views/serializers
+# General media uses DEFAULT_FILE_STORAGE (Cloudinary or Filesystem)
 
 if USE_AWS_S3:
     AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
@@ -232,8 +239,7 @@ if USE_AWS_S3:
     
     AWS_S3_CUSTOM_DOMAIN = f"{CLOUDFRONT_DOMAIN}"
     AWS_LOCATION = 'media'
-    MEDIA_URL = f"https://{CLOUDFRONT_DOMAIN}/{AWS_LOCATION}/"
-    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+    # Video uploads will use the CloudFront domain
     AWS_S3_DEFAULT_SSE = os.getenv('AWS_S3_DEFAULT_SSE', 'AES256')
 else:
     CLOUDFRONT_DOMAIN = None

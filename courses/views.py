@@ -115,14 +115,29 @@ class LessonMediaUploadView(APIView):
             return JsonResponse({'detail': 'No file provided'}, status=400)
         ext = upload.name.split('.')[-1]
         name = f"lessons/{uuid.uuid4().hex}.{ext}"
-        saved_name = default_storage.save(name, upload)
+        
+        # Use Cloudinary explicitly for lesson media (images, documents, etc.)
+        # If Cloudinary is enabled, use it; otherwise fall back to default storage
+        use_cloudinary = os.environ.get('USE_CLOUDINARY', 'False').lower() in ('1', 'true', 'yes')
+        
+        if use_cloudinary:
+            try:
+                from cloudinary_storage.storage import MediaCloudinaryStorage
+                storage = MediaCloudinaryStorage()
+            except ImportError:
+                storage = default_storage
+        else:
+            storage = default_storage
+        
+        saved_name = storage.save(name, upload)
         try:
-            url = default_storage.url(saved_name)
+            url = storage.url(saved_name)
         except Exception:
             url = f"{getattr(settings, 'SITE_URL', '').rstrip('/')}{getattr(settings, 'MEDIA_URL', '/media/')}{saved_name}"
         if url.startswith('/') and getattr(settings, 'SITE_URL', None):
             url = f"{settings.SITE_URL.rstrip('/')}{url}"
         return JsonResponse({'name': saved_name, 'url': url})
+
 
 class CourseImageUploadView(APIView):
     permission_classes = [IsCreatorOrTeacherOrAdmin, permissions.IsAuthenticated]
@@ -134,9 +149,23 @@ class CourseImageUploadView(APIView):
             return JsonResponse({'detail': 'No file provided'}, status=400)
         ext = upload.name.split('.')[-1]
         name = f"courses/{uuid.uuid4().hex}.{ext}"
-        saved_name = default_storage.save(name, upload)
+        
+        # Use Cloudinary explicitly for course images (not videos)
+        # If Cloudinary is enabled, use it; otherwise fall back to default storage
+        use_cloudinary = os.environ.get('USE_CLOUDINARY', 'False').lower() in ('1', 'true', 'yes')
+        
+        if use_cloudinary:
+            try:
+                from cloudinary_storage.storage import MediaCloudinaryStorage
+                storage = MediaCloudinaryStorage()
+            except ImportError:
+                storage = default_storage
+        else:
+            storage = default_storage
+        
+        saved_name = storage.save(name, upload)
         try:
-            url = default_storage.url(saved_name)
+            url = storage.url(saved_name)
         except Exception:
             url = f"{getattr(settings, 'SITE_URL', '').rstrip('/')}{getattr(settings, 'MEDIA_URL', '/media/')}{saved_name}"
         if url.startswith('/') and getattr(settings, 'SITE_URL', None):

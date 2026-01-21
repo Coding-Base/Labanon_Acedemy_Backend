@@ -142,10 +142,23 @@ class CourseSerializer(serializers.ModelSerializer):
         try:
             ext = image_file.name.split('.')[-1]
             name = f"courses/{uuid.uuid4().hex}.{ext}"
-            saved_name = default_storage.save(name, image_file)
+            
+            # Use Cloudinary explicitly for course images
+            use_cloudinary = os.environ.get('USE_CLOUDINARY', 'False').lower() in ('1', 'true', 'yes')
+            
+            if use_cloudinary:
+                try:
+                    from cloudinary_storage.storage import MediaCloudinaryStorage
+                    storage = MediaCloudinaryStorage()
+                except ImportError:
+                    storage = default_storage
+            else:
+                storage = default_storage
+            
+            saved_name = storage.save(name, image_file)
             
             try:
-                url = default_storage.url(saved_name)
+                url = storage.url(saved_name)
             except Exception:
                 url = f"{getattr(settings, 'MEDIA_URL', '/media/')}{saved_name}"
             
@@ -265,9 +278,22 @@ class DiplomaSerializer(serializers.ModelSerializer):
         try:
             ext = image_file.name.split('.')[-1]
             name = f"diplomas/{uuid.uuid4().hex}.{ext}"
-            saved_name = default_storage.save(name, image_file)
+            
+            # Use Cloudinary explicitly for diploma images
+            use_cloudinary = os.environ.get('USE_CLOUDINARY', 'False').lower() in ('1', 'true', 'yes')
+            
+            if use_cloudinary:
+                try:
+                    from cloudinary_storage.storage import MediaCloudinaryStorage
+                    storage = MediaCloudinaryStorage()
+                except ImportError:
+                    storage = default_storage
+            else:
+                storage = default_storage
+            
+            saved_name = storage.save(name, image_file)
             try:
-                url = default_storage.url(saved_name)
+                url = storage.url(saved_name)
             except Exception:
                 url = f"{getattr(settings, 'MEDIA_URL', '/media/')}{saved_name}"
             
