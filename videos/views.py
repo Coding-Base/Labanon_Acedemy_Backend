@@ -510,9 +510,15 @@ class VideoViewSet(viewsets.ModelViewSet):
                 })
             
             except Exception as e:
-                logger.error(f"Failed to generate signed URL for video {video.id}: {str(e)}")
+                error_msg = f"Failed to generate signed URL for video {video.id}: {str(e)}"
+                logger.error(error_msg)
+                # Include more details in response for debugging
                 return Response(
-                    {'error': 'Failed to generate signed URL'},
+                    {
+                        'error': 'Failed to generate signed URL',
+                        'details': str(e),
+                        'video_id': str(video.id)
+                    },
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
         

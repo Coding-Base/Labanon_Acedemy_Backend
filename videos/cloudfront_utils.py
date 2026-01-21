@@ -29,12 +29,29 @@ class CloudFrontURLSigner:
                 "Please set CLOUDFRONT_DOMAIN, CLOUDFRONT_KEY_PAIR_ID, and CLOUDFRONT_PRIVATE_KEY_PATH in .env"
             )
         
-        # Load private key
+        # Load and validate private key
         if not os.path.exists(self.cloudfront_private_key_path):
-            raise ValueError(f"CloudFront private key not found at {self.cloudfront_private_key_path}")
+            raise ValueError(
+                f"CloudFront private key not found at {self.cloudfront_private_key_path}. "
+                f"Ensure CLOUDFRONT_PRIVATE_KEY_CONTENT or CLOUDFRONT_PRIVATE_KEY_PATH is set correctly in .env"
+            )
         
-        with open(self.cloudfront_private_key_path, 'rb') as f:
-            self.private_key = f.read()
+        try:
+            with open(self.cloudfront_private_key_path, 'rb') as f:
+                key_content = f.read()
+                
+                if not key_content.startswith(b'-----BEGIN'):
+                    raise ValueError(
+                        f"Invalid PEM file format: does not start with '-----BEGIN'. "
+                        f"This usually means escaped newlines in environment variable. "
+                        f"Ensure CLOUDFRONT_PRIVATE_KEY_CONTENT uses proper newlines, not \\n"
+                    )
+                
+                self.private_key = key_content
+        except Exception as e:
+            raise ValueError(
+                f"Failed to validate CloudFront private key: {str(e)}"
+            )
     
     def generate_signed_url(self, path: str, expires_in_hours: int = 24) -> str:
         """
@@ -80,13 +97,27 @@ class CloudFrontURLSigner:
         from cryptography.hazmat.primitives import serialization
         from cryptography.hazmat.backends import default_backend
         
-        with open(self.cloudfront_private_key_path, 'rb') as f:
-            private_key = serialization.load_pem_private_key(
-                f.read(),
-                password=None,
-                backend=default_backend()
+        try:
+            with open(self.cloudfront_private_key_path, 'rb') as f:
+                key_content = f.read()
+                
+                # Debug: Check if key looks valid
+                if not key_content.startswith(b'-----BEGIN'):
+                    raise ValueError(
+                        f"Invalid PEM file format: does not start with '-----BEGIN'. "
+                        f"First 100 bytes: {key_content[:100]}"
+                    )
+                
+                private_key = serialization.load_pem_private_key(
+                    key_content,
+                    password=None,
+                    backend=default_backend()
+                )
+            return private_key
+        except Exception as e:
+            raise ValueError(
+                f"Failed to load CloudFront private key from {self.cloudfront_private_key_path}: {str(e)}"
             )
-        return private_key
     
     def generate_hls_signed_url(self, video_id: str, expires_in_hours: int = 24) -> str:
         """

@@ -228,8 +228,10 @@ if USE_AWS_S3:
     CLOUDFRONT_KEY_PATH_DEV = os.environ.get('CLOUDFRONT_PRIVATE_KEY_PATH')
 
     if CLOUDFRONT_KEY_CONTENT:
-        with tempfile.NamedTemporaryFile(mode='w', delete=False) as key_file:
-            key_file.write(CLOUDFRONT_KEY_CONTENT)
+        # Convert escaped newlines to actual newlines (environment variables store \n as literal strings)
+        key_content = CLOUDFRONT_KEY_CONTENT.replace('\\n', '\n')
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.pem') as key_file:
+            key_file.write(key_content)
             CLOUDFRONT_PRIVATE_KEY_PATH = key_file.name
     else:
         CLOUDFRONT_PRIVATE_KEY_PATH = CLOUDFRONT_KEY_PATH_DEV
