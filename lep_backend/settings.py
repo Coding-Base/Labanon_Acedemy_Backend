@@ -152,6 +152,13 @@ DEFAULT_FROM_EMAIL = 'LightHub Academy <lighthub18@gmail.com>'
 SERVER_EMAIL = 'lighthub18@gmail.com'
 ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL', 'lighthub18@gmail.com')
 
+# Invite code used to allow registration of master admin accounts
+# Set this in the server environment (e.g. in your .env) as `ADMIN_INVITE_CODE`.
+ADMIN_INVITE_CODE = os.environ.get('ADMIN_INVITE_CODE')
+if ADMIN_INVITE_CODE:
+    ADMIN_INVITE_CODE = ADMIN_INVITE_CODE.strip() or None
+
+
 # ==================== DRF & Djoser ====================
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
