@@ -242,37 +242,27 @@ if USE_AWS_S3:
     elif os.path.exists(standard_key_path):
         CLOUDFRONT_PRIVATE_KEY_PATH = standard_key_path
     elif CLOUDFRONT_KEY_CONTENT:
-        # --- THE NUCLEAR FIX: RECONSTRUCT KEY FROM SCRATCH ---
-        # This solves "MalformedFraming" errors by aggressively cleaning and rebuilding the key
+        # Handle multiline PEM key from environment variable
+        # The key can have actual newlines or escaped newlines (\n)
         try:
             raw_key = CLOUDFRONT_KEY_CONTENT.strip()
             
-            # 1. Clean dirty characters (quotes, spaces inside the key)
+            # Remove surrounding quotes if present
             if raw_key.startswith('"') and raw_key.endswith('"'):
                 raw_key = raw_key[1:-1]
             if raw_key.startswith("'") and raw_key.endswith("'"):
                 raw_key = raw_key[1:-1]
 
-            # 2. Remove EXISTING headers/footers if they exist (we will re-add them)
-            # This handles cases where they are malformed or missing spaces
-            raw_key = raw_key.replace('-----BEGIN RSA PRIVATE KEY-----', '')
-            raw_key = raw_key.replace('-----END RSA PRIVATE KEY-----', '')
-            raw_key = raw_key.replace('-----BEGIN PRIVATE KEY-----', '') # Handle PKCS8 mismatch
-            raw_key = raw_key.replace('-----END PRIVATE KEY-----', '')
+            # Convert escaped newlines to actual newlines
+            if '\\n' in raw_key:
+                raw_key = raw_key.replace('\\n', '\n')
             
-            # 3. Remove ALL whitespace (newlines, spaces, tabs, literal \n)
-            # This leaves us with just the base64 body string
-            raw_key = raw_key.replace('\\n', '').replace('\n', '').replace(' ', '').replace('\t', '')
-
-            # 4. Reconstruct the PEM line by line (Standard format: 64 chars per line)
-            formatted_key = "-----BEGIN RSA PRIVATE KEY-----\n"
-            for i in range(0, len(raw_key), 64):
-                formatted_key += raw_key[i:i+64] + "\n"
-            formatted_key += "-----END RSA PRIVATE KEY-----\n"
-
-            # 5. Write to temp file
-            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.pem') as key_file:
-                key_file.write(formatted_key)
+            # Write to temp file in binary mode for proper handling
+            with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix='.pem') as key_file:
+                # Encode as UTF-8 bytes
+                key_bytes = raw_key.encode('utf-8')
+                key_file.write(key_bytes)
+                key_file.flush()
                 CLOUDFRONT_PRIVATE_KEY_PATH = key_file.name
                 
         except Exception as e:
