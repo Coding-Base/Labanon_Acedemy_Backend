@@ -225,16 +225,53 @@ if USE_AWS_S3:
     CLOUDFRONT_KEY_PAIR_ID = os.environ.get('CLOUDFRONT_KEY_PAIR_ID')
 
     CLOUDFRONT_KEY_CONTENT = os.environ.get('CLOUDFRONT_PRIVATE_KEY_CONTENT')
-    CLOUDFRONT_KEY_PATH_DEV = os.environ.get('CLOUDFRONT_PRIVATE_KEY_PATH')
+    CLOUDFRONT_KEY_PATH_ENV = os.environ.get('CLOUDFRONT_PRIVATE_KEY_PATH')
+    
+    # Priority order for PEM key:
+    # 1. Look for file in project directory (included in git repo)
+    # 2. Look for file at /etc/cloudfront/ path (if added via Dokploy files)
+    # 3. Create from environment variable if provided
+    # 4. Use path from environment variable
+    
+    # Check project directory first (useful for both dev and production)
+    project_key_path = BASE_DIR / 'cloudfront_private_key.pem'
+    standard_key_path = '/etc/cloudfront/private-key.pem'
+    
+    if os.path.exists(project_key_path):
+        CLOUDFRONT_PRIVATE_KEY_PATH = str(project_key_path)
+    elif os.path.exists(standard_key_path):
+        CLOUDFRONT_PRIVATE_KEY_PATH = standard_key_path
+    elif CLOUDFRONT_KEY_CONTENT:
+        # --- ROBUST KEY CLEANING START ---
+        key_content = CLOUDFRONT_KEY_CONTENT.strip()
 
-    if CLOUDFRONT_KEY_CONTENT:
-        # Convert escaped newlines to actual newlines (environment variables store \n as literal strings)
-        key_content = CLOUDFRONT_KEY_CONTENT.replace('\\n', '\n')
+        # 1. Remove surrounding quotes (common .env paste error)
+        if key_content.startswith('"') and key_content.endswith('"'):
+            key_content = key_content[1:-1]
+        elif key_content.startswith("'") and key_content.endswith("'"):
+            key_content = key_content[1:-1]
+
+        # 2. Convert literal escaped newlines (e.g. \n string) to actual newlines
+        key_content = key_content.replace('\\n', '\n')
+
+        # 3. Ensure proper spacing for headers (fix potential copy-paste errors)
+        key_content = key_content.replace('----- BEGIN', '-----BEGIN')
+        key_content = key_content.replace('----- END', '-----END')
+
+        # 4. Write to temp file in Text Mode ('w')
         with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.pem') as key_file:
             key_file.write(key_content)
+            # Ensure file ends with a newline (PEM requirement)
+            if not key_content.endswith('\n'):
+                key_file.write('\n')
             CLOUDFRONT_PRIVATE_KEY_PATH = key_file.name
+        # --- ROBUST KEY CLEANING END ---
+
+    elif CLOUDFRONT_KEY_PATH_ENV:
+        # Use file path directly from environment
+        CLOUDFRONT_PRIVATE_KEY_PATH = CLOUDFRONT_KEY_PATH_ENV
     else:
-        CLOUDFRONT_PRIVATE_KEY_PATH = CLOUDFRONT_KEY_PATH_DEV
+        CLOUDFRONT_PRIVATE_KEY_PATH = None
     
     CLOUDFRONT_ORIGIN_SECRET = os.environ.get('CLOUDFRONT_ORIGIN_SECRET')
     CLOUDFRONT_CUSTOM_AUTH_SECRET = os.environ.get('CLOUDFRONT_CUSTOM_AUTH_SECRET')
