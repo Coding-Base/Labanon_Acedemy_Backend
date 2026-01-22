@@ -132,6 +132,19 @@ def send_successful_payment_emails(payment):
                     <div class="details-row"><span class="label">Total Paid:</span> <span class="value">{amount_formatted}</span></div>
                     <div class="details-row"><span class="label" style="color:#16a34a;">Your Earnings:</span> <span class="value" style="font-weight:bold;">NGN {payment.creator_amount:,.2f}</span></div>
                 </div>
+                
+                <div class="details-box" style="background-color: #dbeafe; border-left-color: #0284c7;">
+                    <p style="margin-top: 0; font-weight: 600; color: #0c4a6e;">Payment Settlement Timeline</p>
+                    <p style="margin: 10px 0 15px; color: #1e40af; font-size: 14px;">Your earnings will be deposited within <strong>24-72 hours</strong> of this transaction. Here's what to expect:</p>
+                    <ul style="margin: 10px 0; padding-left: 20px; font-size: 13px; color: #1e40af;">
+                        <li><strong>Immediate:</strong> Payment verified and confirmed</li>
+                        <li><strong>0-24 hours:</strong> Payment marked for settlement</li>
+                        <li><strong>24-48 hours:</strong> Paystack processes the payout</li>
+                        <li><strong>48-72 hours:</strong> Funds deposited in your bank account</li>
+                    </ul>
+                    <p style="margin: 10px 0 0; font-size: 12px; color: #1e40af;"><em>Note: Settlement times may vary based on your bank and payment gateway processing. Weekend and holiday deposits may take longer.</em></p>
+                </div>
+                
                 <p>Keep up the excellent work providing value to students!</p>
             """
             
