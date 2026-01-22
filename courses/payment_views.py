@@ -267,12 +267,29 @@ class InitiatePaymentView(APIView):
                 frontend_base = os.getenv('FRONTEND_URL') or 'http://localhost:5173'
                 callback_url = f"{frontend_base}/payment/verify"
 
+                # For course/diploma payments, try to use tutor's sub-account for split payment
+                recipient_code = None
+                if kind in (Payment.KIND_COURSE, Payment.KIND_DIPLOMA):
+                    creator = item.creator if item else None
+                    if creator:
+                        try:
+                            subaccount = PaystackSubAccount.objects.get(user=creator)
+                            if subaccount.subaccount_code:
+                                recipient_code = subaccount.subaccount_code
+                                # Store tutor info in payment for reference
+                                payment.recipient_code = recipient_code
+                                payment.save()
+                        except PaystackSubAccount.DoesNotExist:
+                            logger.warning(f"No Paystack sub-account found for course creator {creator.id}")
+
                 paystack_data = client.initialize_payment(
                     email=user.email,
                     amount=naira_to_kobo(amount),
                     reference=payment_reference,
                     metadata=metadata,
-                    callback_url=callback_url
+                    callback_url=callback_url,
+                    recipient_code=recipient_code  # Use tutor's subaccount
+
                 )
 
                 return Response({
@@ -825,6 +842,21 @@ class InitiateFlutterwavePaymentView(APIView):
                 frontend_base = os.getenv('FRONTEND_URL') or 'http://localhost:5173'
                 callback_url = f"{frontend_base}/payment/flutterwave/verify"
                 
+                # For course/diploma payments, try to use tutor's sub-account for split payment
+                subaccount_id = None
+                if kind in (Payment.KIND_COURSE, Payment.KIND_DIPLOMA):
+                    creator = item.creator if item else None
+                    if creator:
+                        try:
+                            flutterwave_subaccount = FlutterwaveSubAccount.objects.get(user=creator)
+                            if flutterwave_subaccount.subaccount_id:
+                                subaccount_id = flutterwave_subaccount.subaccount_id
+                                # Store tutor info in payment for reference
+                                payment.recipient_code = str(subaccount_id)
+                                payment.save()
+                        except FlutterwaveSubAccount.DoesNotExist:
+                            logger.warning(f"No Flutterwave sub-account found for course creator {creator.id}")
+                
                 flutterwave_data = client.initialize_payment(
                     email=user.email,
                     amount=amount,
@@ -832,7 +864,8 @@ class InitiateFlutterwavePaymentView(APIView):
                     metadata=metadata,
                     callback_url=callback_url,
                     full_name=f'{user.first_name} {user.last_name}' if user.first_name or user.last_name else user.username,
-                    phone_number=getattr(user, 'phone', '') or ''
+                    phone_number=getattr(user, 'phone', '') or '',
+                    subaccount_id=subaccount_id  # Use tutor's subaccount
                 )
 
                 return Response({

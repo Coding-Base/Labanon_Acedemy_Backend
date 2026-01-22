@@ -165,6 +165,7 @@ class Payment(models.Model):
     
     # Paystack integration
     paystack_reference = models.CharField(max_length=255, blank=True, null=True, unique=True, help_text="Paystack reference code")
+    recipient_code = models.CharField(max_length=255, blank=True, null=True, help_text="Paystack recipient code for tutor sub-account")
     
     # Flutterwave integration
     flutterwave_reference = models.CharField(max_length=255, blank=True, null=True, unique=True, help_text="Flutterwave tx_ref code")

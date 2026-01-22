@@ -56,7 +56,7 @@ class PaystackClient:
             # Raise with the parsed response body when available to help debugging
             raise PaystackError(f"Paystack API error: Status {status_code}, Response: {error_body}")
     
-    def initialize_payment(self, email, amount, reference, metadata=None, callback_url=None):
+    def initialize_payment(self, email, amount, reference, metadata=None, callback_url=None, recipient_code=None, split_code=None):
         """
         Initialize payment transaction.
         
@@ -66,6 +66,8 @@ class PaystackClient:
             reference (str): Unique reference for this transaction
             metadata (dict): Additional metadata to send with transaction
             callback_url (str): URL to redirect to after payment (Paystack will append ?reference=xxx)
+            recipient_code (str): Recipient code for split payment (for paying a sub-account)
+            split_code (str): Split code for distributing payment among multiple accounts
         
         Returns:
             dict: Response with authorization_url and access_code
@@ -79,6 +81,10 @@ class PaystackClient:
             data['metadata'] = metadata
         if callback_url:
             data['callback_url'] = callback_url
+        if recipient_code:
+            data['recipient'] = recipient_code
+        if split_code:
+            data['split_code'] = split_code
         
         response = self._request('POST', '/transaction/initialize', data)
         if not response.get('status'):

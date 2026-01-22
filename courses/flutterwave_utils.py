@@ -86,7 +86,7 @@ class FlutterwaveClient:
             logger.error(f"Flutterwave API request exception: {str(e)}, status={status_code}, body={err_body}")
             raise FlutterwaveError(f"Flutterwave API error: Status {status_code}, Response: {err_body}")
     
-    def initialize_payment(self, email, amount, reference, metadata=None, callback_url=None, full_name='', phone_number=''):
+    def initialize_payment(self, email, amount, reference, metadata=None, callback_url=None, full_name='', phone_number='', subaccount_id=None):
         """
         Initialize payment transaction for Flutterwave.
         
@@ -98,6 +98,7 @@ class FlutterwaveClient:
             callback_url (str): URL to redirect to after payment
             full_name (str): Customer full name
             phone_number (str): Customer phone number
+            subaccount_id (int): Flutterwave sub-account ID for split payment (to credit tutor)
         
         Returns:
             dict: Response with link and payment data
@@ -119,6 +120,16 @@ class FlutterwaveClient:
         
         if metadata:
             data['meta'] = metadata
+        
+        # If a sub-account is specified (for tutor payments), configure the split
+        if subaccount_id:
+            data['subaccounts'] = [
+                {
+                    'id': subaccount_id,
+                    'transaction_charge_type': 'percentage',
+                    'transaction_charge': 95  # Tutor gets 95%, platform gets 5%
+                }
+            ]
         
         data['customizations'] = {
             'title': 'LightHub Academy Payment',
