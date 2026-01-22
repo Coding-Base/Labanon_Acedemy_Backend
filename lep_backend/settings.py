@@ -242,30 +242,43 @@ if USE_AWS_S3:
     elif os.path.exists(standard_key_path):
         CLOUDFRONT_PRIVATE_KEY_PATH = standard_key_path
     elif CLOUDFRONT_KEY_CONTENT:
-        # --- ROBUST KEY CLEANING START ---
-        key_content = CLOUDFRONT_KEY_CONTENT.strip()
+        # --- THE NUCLEAR FIX: RECONSTRUCT KEY FROM SCRATCH ---
+        # This solves "MalformedFraming" errors by aggressively cleaning and rebuilding the key
+        try:
+            raw_key = CLOUDFRONT_KEY_CONTENT.strip()
+            
+            # 1. Clean dirty characters (quotes, spaces inside the key)
+            if raw_key.startswith('"') and raw_key.endswith('"'):
+                raw_key = raw_key[1:-1]
+            if raw_key.startswith("'") and raw_key.endswith("'"):
+                raw_key = raw_key[1:-1]
 
-        # 1. Remove surrounding quotes (common .env paste error)
-        if key_content.startswith('"') and key_content.endswith('"'):
-            key_content = key_content[1:-1]
-        elif key_content.startswith("'") and key_content.endswith("'"):
-            key_content = key_content[1:-1]
+            # 2. Remove EXISTING headers/footers if they exist (we will re-add them)
+            # This handles cases where they are malformed or missing spaces
+            raw_key = raw_key.replace('-----BEGIN RSA PRIVATE KEY-----', '')
+            raw_key = raw_key.replace('-----END RSA PRIVATE KEY-----', '')
+            raw_key = raw_key.replace('-----BEGIN PRIVATE KEY-----', '') # Handle PKCS8 mismatch
+            raw_key = raw_key.replace('-----END PRIVATE KEY-----', '')
+            
+            # 3. Remove ALL whitespace (newlines, spaces, tabs, literal \n)
+            # This leaves us with just the base64 body string
+            raw_key = raw_key.replace('\\n', '').replace('\n', '').replace(' ', '').replace('\t', '')
 
-        # 2. Convert literal escaped newlines (e.g. \n string) to actual newlines
-        key_content = key_content.replace('\\n', '\n')
+            # 4. Reconstruct the PEM line by line (Standard format: 64 chars per line)
+            formatted_key = "-----BEGIN RSA PRIVATE KEY-----\n"
+            for i in range(0, len(raw_key), 64):
+                formatted_key += raw_key[i:i+64] + "\n"
+            formatted_key += "-----END RSA PRIVATE KEY-----\n"
 
-        # 3. Ensure proper spacing for headers (fix potential copy-paste errors)
-        key_content = key_content.replace('----- BEGIN', '-----BEGIN')
-        key_content = key_content.replace('----- END', '-----END')
-
-        # 4. Write to temp file in Text Mode ('w')
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.pem') as key_file:
-            key_file.write(key_content)
-            # Ensure file ends with a newline (PEM requirement)
-            if not key_content.endswith('\n'):
-                key_file.write('\n')
-            CLOUDFRONT_PRIVATE_KEY_PATH = key_file.name
-        # --- ROBUST KEY CLEANING END ---
+            # 5. Write to temp file
+            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.pem') as key_file:
+                key_file.write(formatted_key)
+                CLOUDFRONT_PRIVATE_KEY_PATH = key_file.name
+                
+        except Exception as e:
+            print(f"Error processing CloudFront key: {e}")
+            CLOUDFRONT_PRIVATE_KEY_PATH = None
+        # --- END NUCLEAR FIX ---
 
     elif CLOUDFRONT_KEY_PATH_ENV:
         # Use file path directly from environment
