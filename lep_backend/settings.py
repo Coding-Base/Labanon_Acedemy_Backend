@@ -210,10 +210,6 @@ AUTHENTICATION_BACKENDS = [
 ]
 
 # ==================== AWS CloudFront ====================
-# NOTE: AWS S3 is used ONLY for videos, not for general media files like images
-# Videos use explicit VideoS3Storage class in views/serializers
-# General media uses DEFAULT_FILE_STORAGE (Cloudinary or Filesystem)
-
 if USE_AWS_S3:
     AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
     AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY')
@@ -224,55 +220,22 @@ if USE_AWS_S3:
     CLOUDFRONT_DISTRIBUTION_ID = os.environ.get('CLOUDFRONT_DISTRIBUTION_ID')
     CLOUDFRONT_KEY_PAIR_ID = os.environ.get('CLOUDFRONT_KEY_PAIR_ID')
 
-    CLOUDFRONT_KEY_CONTENT = os.environ.get('CLOUDFRONT_PRIVATE_KEY_CONTENT')
-    CLOUDFRONT_KEY_PATH_ENV = os.environ.get('CLOUDFRONT_PRIVATE_KEY_PATH')
+    # Path to the key we generated via Start Command
+    # (Generated from CLOUDFRONT_PEM_B64 env var)
+    dokploy_generated_key = '/app/cloudfront_key.pem'
     
-    # Priority order for PEM key:
-    # 1. Look for file in project directory (included in git repo)
-    # 2. Look for file at /etc/cloudfront/ path (if added via Dokploy files)
-    # 3. Create from environment variable if provided
-    # 4. Use path from environment variable
-    
-    # Check project directory first (useful for both dev and production)
-    project_key_path = BASE_DIR / 'cloudfront_private_key.pem'
-    standard_key_path = '/etc/cloudfront/private-key.pem'
-    
-    if os.path.exists(project_key_path):
-        CLOUDFRONT_PRIVATE_KEY_PATH = str(project_key_path)
-    elif os.path.exists(standard_key_path):
-        CLOUDFRONT_PRIVATE_KEY_PATH = standard_key_path
-    elif CLOUDFRONT_KEY_CONTENT:
-        # Handle multiline PEM key from environment variable
-        # The key can have actual newlines or escaped newlines (\n)
-        try:
-            raw_key = CLOUDFRONT_KEY_CONTENT.strip()
-            
-            # Remove surrounding quotes if present
-            if raw_key.startswith('"') and raw_key.endswith('"'):
-                raw_key = raw_key[1:-1]
-            if raw_key.startswith("'") and raw_key.endswith("'"):
-                raw_key = raw_key[1:-1]
+    # Path inside project (for local dev)
+    local_project_key = BASE_DIR / 'cloudfront_private_key.pem'
 
-            # Convert escaped newlines to actual newlines
-            if '\\n' in raw_key:
-                raw_key = raw_key.replace('\\n', '\n')
-            
-            # Write to temp file in binary mode for proper handling
-            with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix='.pem') as key_file:
-                # Encode as UTF-8 bytes
-                key_bytes = raw_key.encode('utf-8')
-                key_file.write(key_bytes)
-                key_file.flush()
-                CLOUDFRONT_PRIVATE_KEY_PATH = key_file.name
-                
-        except Exception as e:
-            print(f"Error processing CloudFront key: {e}")
-            CLOUDFRONT_PRIVATE_KEY_PATH = None
-        # --- END NUCLEAR FIX ---
+    # Fallback env var
+    env_path = os.environ.get('CLOUDFRONT_PRIVATE_KEY_PATH')
 
-    elif CLOUDFRONT_KEY_PATH_ENV:
-        # Use file path directly from environment
-        CLOUDFRONT_PRIVATE_KEY_PATH = CLOUDFRONT_KEY_PATH_ENV
+    if os.path.exists(dokploy_generated_key):
+        CLOUDFRONT_PRIVATE_KEY_PATH = dokploy_generated_key
+    elif os.path.exists(local_project_key):
+        CLOUDFRONT_PRIVATE_KEY_PATH = str(local_project_key)
+    elif env_path:
+        CLOUDFRONT_PRIVATE_KEY_PATH = env_path
     else:
         CLOUDFRONT_PRIVATE_KEY_PATH = None
     
@@ -281,7 +244,6 @@ if USE_AWS_S3:
     
     AWS_S3_CUSTOM_DOMAIN = f"{CLOUDFRONT_DOMAIN}"
     AWS_LOCATION = 'media'
-    # Video uploads will use the CloudFront domain
     AWS_S3_DEFAULT_SSE = os.getenv('AWS_S3_DEFAULT_SSE', 'AES256')
 else:
     CLOUDFRONT_DOMAIN = None
