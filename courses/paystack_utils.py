@@ -82,11 +82,19 @@ class PaystackClient:
         if callback_url:
             data['callback_url'] = callback_url
         if recipient_code:
-            data['recipient'] = recipient_code
+            # Paystack expects the key `subaccount` when directing payments to a sub-account
+            # (older code used `recipient` which can result in payments being routed to the
+            # platform account). Use `subaccount` here and log the payload for diagnostics.
+            data['subaccount'] = recipient_code
+
+        # Log the initialization payload for debugging (do not include secret keys)
+        logger.debug(f"Initializing Paystack payment with payload: { {k:v for k,v in data.items() if k!='metadata'} }")
         if split_code:
             data['split_code'] = split_code
         
         response = self._request('POST', '/transaction/initialize', data)
+        # Log Paystack response for easier troubleshooting of split/subaccount routing
+        logger.debug(f"Paystack initialize response: {response}")
         if not response.get('status'):
             raise PaystackError(response.get('message', 'Failed to initialize payment'))
         return response.get('data', {})
