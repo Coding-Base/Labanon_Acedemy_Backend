@@ -560,7 +560,8 @@ class GetExamQuestionsView(APIView):
                     for c in question.choices.all()
                 ],
                 'user_answer_id': answer.selected_choice.id if answer.selected_choice else None,
-                'is_answered': answer.selected_choice is not None
+                'is_answered': answer.selected_choice is not None,
+                'year': question.year
             })
 
         return Response({
