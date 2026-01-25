@@ -25,6 +25,7 @@ from .models import (
     Payment, Course, Diploma, Enrollment, DiplomaEnrollment,
     PaystackSubAccount, FlutterwaveSubAccount, ActivationFee, ActivationUnlock
 )
+from .models import PaymentSplitConfig
 from .paystack_utils import PaystackClient, naira_to_kobo, calculate_split, generate_payment_reference, PaystackError
 from .flutterwave_utils import FlutterwaveClient, FlutterwaveError, generate_payment_reference as generate_flutterwave_reference
 from .serializers import PaymentSerializer
@@ -239,7 +240,20 @@ class InitiatePaymentView(APIView):
                 platform_fee = amount_decimal
                 creator_amount = Decimal('0.00')
             else:
-                platform_fee, creator_amount = calculate_split(amount_decimal, platform_percentage=5)
+                # Fetch the configured splits
+                split_cfg = PaymentSplitConfig.get_solo()
+                # If the item has an institution, use institution_share; otherwise tutor_share
+                creator_share_percent = None
+                if item_type == 'course' and isinstance(item, Course) and item.institution:
+                    creator_share_percent = split_cfg.institution_share
+                elif item_type == 'diploma' and isinstance(item, Diploma) and item.institution:
+                    creator_share_percent = split_cfg.institution_share
+                else:
+                    creator_share_percent = split_cfg.tutor_share
+
+                # Platform percentage is the remainder
+                platform_percentage = Decimal('100.00') - Decimal(str(creator_share_percent))
+                platform_fee, creator_amount = calculate_split(amount_decimal, platform_percentage=platform_percentage)
 
             payment_reference = generate_payment_reference()
 
@@ -698,11 +712,19 @@ class SubAccountViewSet(viewsets.ViewSet):
             except PaystackError:
                 logger.warning('Could not validate bank code against Paystack list; continuing to resolve.')
             
+            # Use configured tutor share to set subaccount percentage_charge so Paystack can route splits correctly
+            try:
+                split_cfg = PaymentSplitConfig.get_solo()
+                percentage_charge = float(split_cfg.tutor_share)
+            except Exception:
+                percentage_charge = 0
+
             subaccount_data = client.create_subaccount(
                 business_name=account_name,
                 settlement_bank=bank_code,
                 account_number=account_number,
                 account_holder_name=account_name,
+                percentage_charge=percentage_charge,
                 description=f'Sub-account for {account_name}',
                 primary_contact_email=user.email,
                 primary_contact_name=f'{user.first_name} {user.last_name}' if user.first_name or user.last_name else user.username,
@@ -764,6 +786,43 @@ class SubAccountViewSet(viewsets.ViewSet):
             })
         except PaystackSubAccount.DoesNotExist:
             return Response({'detail': 'Sub-account not found'}, status=status.HTTP_404_NOT_FOUND)
+
+
+class PaymentSplitConfigView(APIView):
+    """Admin-only API to view and update payment split configuration."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            cfg = PaymentSplitConfig.get_solo()
+            return Response({
+                'tutor_share': float(cfg.tutor_share),
+                'institution_share': float(cfg.institution_share),
+                'updated_at': cfg.updated_at,
+                'updated_by': getattr(cfg.updated_by, 'username', None)
+            })
+        except Exception as e:
+            logger.error(f"Failed to fetch payment split config: {str(e)}")
+            return Response({'detail': 'Error fetching config'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def post(self, request):
+        if not request.user.is_staff:
+            return Response({'detail': 'Forbidden'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            tutor = request.data.get('tutor_share')
+            institution = request.data.get('institution_share')
+            if tutor is None or institution is None:
+                return Response({'detail': 'Both tutor_share and institution_share required'}, status=status.HTTP_400_BAD_REQUEST)
+
+            cfg = PaymentSplitConfig.get_solo()
+            cfg.tutor_share = Decimal(str(tutor))
+            cfg.institution_share = Decimal(str(institution))
+            cfg.updated_by = request.user
+            cfg.save()
+            return Response({'detail': 'Updated', 'tutor_share': float(cfg.tutor_share), 'institution_share': float(cfg.institution_share)})
+        except Exception as e:
+            logger.error(f"Failed to update payment split config: {str(e)}")
+            return Response({'detail': 'Error updating config'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 # ==================== FLUTTERWAVE INTEGRATION ====================

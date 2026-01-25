@@ -310,6 +310,32 @@ class PaystackSubAccount(models.Model):
         verbose_name_plural = "Paystack Sub-accounts"
 
 
+class PaymentSplitConfig(models.Model):
+    """Singleton config for payment split ratios managed by master admin.
+
+    - `tutor_share`: Percentage share given to individual tutors (e.g., 95.00)
+    - `institution_share`: Percentage share given to institutions/schools (e.g., 90.00)
+    The platform share is implicitly `100 - creator_share`.
+    """
+    tutor_share = models.DecimalField(max_digits=5, decimal_places=2, default=95.00, help_text="Percent share for tutors")
+    institution_share = models.DecimalField(max_digits=5, decimal_places=2, default=90.00, help_text="Percent share for institutions/schools")
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, help_text="Admin user who last updated these values")
+
+    class Meta:
+        verbose_name = "Payment Split Config"
+
+    def __str__(self):
+        return f"Splits (tutor={self.tutor_share}%, institution={self.institution_share}%)"
+
+    @classmethod
+    def get_solo(cls):
+        obj = cls.objects.first()
+        if not obj:
+            obj = cls.objects.create()
+        return obj
+
+
 class FlutterwaveSubAccount(models.Model):
     """Flutterwave sub-account for tutors and institutions."""
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='flutterwave_subaccount')
