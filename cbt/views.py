@@ -265,11 +265,12 @@ class BulkQuestionUploadView(APIView):
                     errors.append(f"{question_id}: correct_answer '{correct_answer}' must be one of {list(options.keys())}")
                     continue
 
-                # Create question
+                # Create question (save explanation if provided)
                 question = Question.objects.create(
                     subject=subject,
                     text=question_text,
                     year=str(year) if year else None,
+                    explanation=explanation,
                     creator=user
                 )
 

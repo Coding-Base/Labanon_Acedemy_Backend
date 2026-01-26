@@ -42,6 +42,7 @@ class Question(models.Model):
     text = models.TextField()
     image = models.ImageField(upload_to='cbt_questions/', blank=True, null=True)
     year = models.CharField(max_length=10, blank=True, null=True)
+    explanation = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 
