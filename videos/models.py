@@ -33,8 +33,10 @@ class Video(models.Model):
     s3_hls_folder_key = models.CharField(max_length=512, blank=True)  # Folder containing HLS segments
     
     # CloudFront references
-    cloudfront_url = models.URLField(blank=True, null=True)  # CDN URL to HLS manifest
-    cloudfront_thumbnail_url = models.URLField(blank=True, null=True)  # CDN URL to thumbnail
+    # Signed CloudFront URLs can be long (contain policy/signature/query params).
+    # Use TextField so the DB won't reject long signed URLs.
+    cloudfront_url = models.TextField(blank=True, null=True)  # CDN URL to HLS manifest (may be signed)
+    cloudfront_thumbnail_url = models.TextField(blank=True, null=True)  # CDN URL to thumbnail (may be signed)
     
     # Processing
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='uploading')
