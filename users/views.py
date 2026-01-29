@@ -209,7 +209,7 @@ class PasswordResetRequestView(APIView):
                 </div>
                 <div class="content">
                     <p>Hello <strong>{user.username}</strong>,</p>
-                    <p>We received a request to reset your password for your Lebanon Academy account.</p>
+                    <p>We received a request to reset your password for your Lighthub Academy account.</p>
                     <p>Click the button below to choose a new password:</p>
                     <center><a href="{reset_link}" class="btn">Reset Password</a></center>
                     <p style="margin-top: 30px; font-size: 13px; color: #6b7280;">If you did not request this change, please ignore this email. Your password will remain unchanged.</p>
@@ -234,7 +234,7 @@ class PasswordResetRequestView(APIView):
         
         try:
             send_mail(
-                subject="Reset Your Password - Lebanon Academy",
+                subject="Reset Your Password - Lighthub Academy",
                 message=plain_message,
                 from_email=settings.DEFAULT_FROM_EMAIL,
                 recipient_list=[email],
