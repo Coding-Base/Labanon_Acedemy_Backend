@@ -144,6 +144,7 @@ CORS_ALLOWED_ORIGINS = [
     'http://localhost:5173',
     'http://localhost:3000',
     'https://lighthubacademy.org',
+    'https://www.lighthubacademy.org',
     'https://api.lighthubacademy.org',
     'https://encoder.lighthubacademy.org',
 ]
@@ -152,7 +153,16 @@ env_cors = os.environ.get('CORS_ALLOWED_ORIGINS')
 if env_cors:
     CORS_ALLOWED_ORIGINS.extend(env_cors.split(','))
 
-CSRF_TRUSTED_ORIGINS = os.environ.get('CSRF_TRUSTED_ORIGINS', 'http://localhost:5173').split(',')
+# Explicitly add the new domain to CSRF trusted origins to prevent 403 errors on forms
+CSRF_TRUSTED_ORIGINS = [
+    'https://lighthubacademy.org', 
+    'https://www.lighthubacademy.org',
+    'https://api.lighthubacademy.org',
+    'http://localhost:5173'
+]
+env_csrf = os.environ.get('CSRF_TRUSTED_ORIGINS')
+if env_csrf:
+    CSRF_TRUSTED_ORIGINS.extend(env_csrf.split(','))
 
 # ==================== Email ====================
 ANYMAIL = {
@@ -164,8 +174,11 @@ if ANYMAIL["MAILJET_API_KEY"] and ANYMAIL["MAILJET_SECRET_KEY"]:
 else:
     EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 
-DEFAULT_FROM_EMAIL = 'LightHub Academy <lighthub18@gmail.com>'
-SERVER_EMAIL = 'lighthub18@gmail.com'
+# UPDATED: Use the verified domain email for sending to avoid spam
+DEFAULT_FROM_EMAIL = 'LightHub Academy <support@lighthubacademy.org>'
+SERVER_EMAIL = 'support@lighthubacademy.org'
+
+# UPDATED: Keep your Gmail for receiving admin alerts (if preferred), or change to support@
 ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL', 'lighthub18@gmail.com')
 
 # Invite code used to allow registration of master admin accounts
@@ -174,7 +187,7 @@ if ADMIN_INVITE_CODE:
     ADMIN_INVITE_CODE = ADMIN_INVITE_CODE.strip() or None
 
 # Frontend base URL used in emails and password reset links
-FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://lighthubacademy.org')
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'https://lighthubacademy.org')
 if FRONTEND_URL:
     FRONTEND_URL = FRONTEND_URL.strip()
 
