@@ -143,9 +143,9 @@ CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:5173',
     'http://localhost:3000',
-    'https://lighthubacademy.cloud',
-    'https://api.lighthubacademy.cloud',
-    'https://encoder.lighthubacademy.cloud',
+    'https://lighthubacademy.org',
+    'https://api.lighthubacademy.org',
+    'https://encoder.lighthubacademy.org',
 ]
 
 env_cors = os.environ.get('CORS_ALLOWED_ORIGINS')
@@ -174,7 +174,7 @@ if ADMIN_INVITE_CODE:
     ADMIN_INVITE_CODE = ADMIN_INVITE_CODE.strip() or None
 
 # Frontend base URL used in emails and password reset links
-FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://lighthubacademy.cloud')
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://lighthubacademy.org')
 if FRONTEND_URL:
     FRONTEND_URL = FRONTEND_URL.strip()
 
