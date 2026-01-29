@@ -86,8 +86,15 @@ class StudentAnswerSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = StudentAnswer
-        fields = ['id', 'question', 'question_text', 'question_image', 'selected_choice', 'is_correct', 'correct_choice_id', 'correct_answer', 'answered_at']
+        fields = ['id', 'question', 'question_text', 'question_image', 'selected_choice', 'selected_choice_text', 'is_correct', 'correct_choice_id', 'correct_answer', 'answered_at']
         read_only_fields = ['is_correct', 'answered_at']
+
+    selected_choice_text = serializers.SerializerMethodField()
+
+    def get_selected_choice_text(self, obj):
+        if obj.selected_choice:
+            return format_math_text(obj.selected_choice.text)
+        return None
 
     def get_correct_choice_id(self, obj):
         correct_choice = obj.question.choices.filter(is_correct=True).first()
