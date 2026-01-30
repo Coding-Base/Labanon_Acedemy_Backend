@@ -11,6 +11,10 @@ class Blog(models.Model):
     content = models.TextField()
     image = models.CharField(max_length=512, blank=True)  # URL or file path
     excerpt = models.TextField(max_length=500, blank=True)
+    # SEO / Metadata for search engines
+    meta_title = models.CharField(max_length=255, blank=True)
+    meta_description = models.CharField(max_length=320, blank=True)
+    meta_keywords = models.CharField(max_length=512, blank=True)
     is_published = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

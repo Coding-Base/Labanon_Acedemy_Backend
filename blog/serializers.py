@@ -1,5 +1,12 @@
 from rest_framework import serializers
 from .models import Blog, BlogComment, BlogLike, BlogShare
+import logging
+
+try:
+    import bleach
+except Exception:
+    bleach = None
+    logging.getLogger(__name__).warning('bleach not installed; HTML sanitization will be skipped')
 
 
 class BlogLikeSerializer(serializers.ModelSerializer):
@@ -45,7 +52,7 @@ class BlogSerializer(serializers.ModelSerializer):
         model = Blog
         fields = ['id', 'title', 'slug', 'content', 'image', 'excerpt', 'is_published', 'author', 'author_username', 
                   'created_at', 'updated_at', 'published_at', 'likes_count', 'comments_count', 'shares_count', 
-                  'user_liked', 'comments']
+                  'user_liked', 'comments', 'meta_title', 'meta_description', 'meta_keywords']
         read_only_fields = ['slug', 'author', 'created_at', 'updated_at', 'likes_count', 'comments_count', 'shares_count']
 
     def get_user_liked(self, obj):
@@ -61,6 +68,45 @@ class BlogSerializer(serializers.ModelSerializer):
     def get_comments(self, obj):
         comments = obj.comments.filter(parent_comment__isnull=True)  # Only top-level comments
         return BlogCommentSerializer(comments, many=True, context=self.context).data
+
+    def _sanitize_html(self, html: str) -> str:
+        """Sanitize HTML content using bleach if available."""
+        if not html:
+            return ''
+        if not bleach:
+            return html
+
+        allowed_tags = [
+            'p', 'br', 'strong', 'b', 'em', 'i', 'u', 'a', 'ul', 'ol', 'li',
+            'h1', 'h2', 'h3', 'blockquote', 'code', 'pre', 'img', 'span'
+        ]
+        allowed_attrs = {
+            '*': ['style'],
+            'a': ['href', 'title', 'target', 'rel'],
+            'img': ['src', 'alt', 'title', 'width', 'height']
+        }
+        cleaned = bleach.clean(html, tags=allowed_tags, attributes=allowed_attrs, strip=True)
+        return cleaned
+
+    def create(self, validated_data):
+        # Sanitize content and excerpt and meta fields
+        content = validated_data.get('content', '')
+        excerpt = validated_data.get('excerpt', '')
+        validated_data['content'] = self._sanitize_html(content)
+        validated_data['excerpt'] = bleach.clean(excerpt, strip=True) if bleach and excerpt else excerpt
+        # sanitize meta_description (strip tags)
+        if 'meta_description' in validated_data and validated_data['meta_description']:
+            validated_data['meta_description'] = bleach.clean(validated_data['meta_description'], strip=True) if bleach else validated_data['meta_description']
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        if 'content' in validated_data:
+            validated_data['content'] = self._sanitize_html(validated_data.get('content', ''))
+        if 'excerpt' in validated_data and bleach:
+            validated_data['excerpt'] = bleach.clean(validated_data.get('excerpt', ''), strip=True)
+        if 'meta_description' in validated_data and validated_data['meta_description'] and bleach:
+            validated_data['meta_description'] = bleach.clean(validated_data['meta_description'], strip=True)
+        return super().update(instance, validated_data)
 
 
 class BlogShareSerializer(serializers.ModelSerializer):

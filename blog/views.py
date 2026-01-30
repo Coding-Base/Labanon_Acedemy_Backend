@@ -7,6 +7,7 @@ from django.utils import timezone
 from .models import Blog, BlogComment, BlogLike, BlogShare
 from .serializers import BlogSerializer, BlogCommentSerializer, BlogLikeSerializer, BlogShareSerializer
 from users.permissions import IsMasterAdmin
+from django.shortcuts import render, get_object_or_404
 
 
 class StandardResultsSetPagination(PageNumberPagination):
@@ -152,3 +153,19 @@ class BlogCommentViewSet(viewsets.ModelViewSet):
         comment.save()
         serializer = BlogLikeSerializer(like)
         return Response({'liked': True, 'likes_count': comment.likes_count, 'like': serializer.data})
+
+
+def blog_detail_view(request, slug):
+    """Server-rendered blog detail page with meta tags for SEO/crawlers."""
+    blog = get_object_or_404(Blog, slug=slug, is_published=True)
+    context = {
+        'title': blog.title,
+        'content': blog.content,
+        'excerpt': blog.excerpt,
+        'meta_title': blog.meta_title,
+        'meta_description': blog.meta_description,
+        'meta_keywords': blog.meta_keywords,
+        'published_at': blog.published_at,
+        'author': blog.author,
+    }
+    return render(request, 'blog_detail.html', context)

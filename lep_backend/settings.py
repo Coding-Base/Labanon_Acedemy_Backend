@@ -44,6 +44,8 @@ INSTALLED_APPS = [a for a in INSTALLED_APPS if a]
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'lep_backend.middleware.rate_limit.RateLimitMiddleware',
+    'lep_backend.middleware.security_headers.SecurityHeadersMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -53,6 +55,35 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'lep_backend.middleware.CloudFrontOriginMiddleware',
 ]
+
+# === Security hardening defaults ===
+# Enable secure cookies in production
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+
+# Prevent content sniffing
+SECURE_CONTENT_TYPE_NOSNIFF = True
+# Enable browser XSS filter
+SECURE_BROWSER_XSS_FILTER = True
+# Prevent the site from being framed to avoid clickjacking
+X_FRAME_OPTIONS = 'DENY'
+
+# HSTS - only enable when running over HTTPS in production
+SECURE_HSTS_SECONDS = 31536000 if not DEBUG else 0
+SECURE_HSTS_INCLUDE_SUBDOMAINS = not DEBUG
+SECURE_HSTS_PRELOAD = not DEBUG
+
+# Force HTTPS redirect in production
+SECURE_SSL_REDIRECT = not DEBUG
+
+# Referrer policy
+SECURE_REFERRER_POLICY = 'no-referrer-when-downgrade'
+
+# Rate limiting (middleware) defaults - IP based protection
+RATE_LIMIT_MAX_REQUESTS = int(os.environ.get('RATE_LIMIT_MAX_REQUESTS', '300'))
+RATE_LIMIT_WINDOW_SECONDS = int(os.environ.get('RATE_LIMIT_WINDOW_SECONDS', '300'))
+RATE_LIMIT_BAN_SECONDS = int(os.environ.get('RATE_LIMIT_BAN_SECONDS', '600'))
+
 
 ROOT_URLCONF = 'lep_backend.urls'
 
@@ -198,6 +229,16 @@ REST_FRAMEWORK = {
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
 }
+
+# DRF throttling to protect API endpoints from high request rates
+REST_FRAMEWORK.setdefault('DEFAULT_THROTTLE_CLASSES', [
+    'rest_framework.throttling.AnonRateThrottle',
+    'rest_framework.throttling.UserRateThrottle',
+])
+REST_FRAMEWORK.setdefault('DEFAULT_THROTTLE_RATES', {
+    'anon': os.environ.get('DRF_THROTTLE_ANON', '60/min'),
+    'user': os.environ.get('DRF_THROTTLE_USER', '300/min'),
+})
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),

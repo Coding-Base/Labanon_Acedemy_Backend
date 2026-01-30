@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>{% if meta_title %}{{ meta_title }}{% else %}{{ title }}{% endif %}</title>
+    <meta name="description" content="{% if meta_description %}{{ meta_description }}{% else %}{{ excerpt|default:'' }}{% endif %}">
+    {% if meta_keywords %}<meta name="keywords" content="{{ meta_keywords }}">{% endif %}
+    <link rel="canonical" href="{{ request.build_absolute_uri }}" />
+    <style>body{font-family:Arial,Helvetica,sans-serif;line-height:1.6;color:#111;background:#fff;padding:24px} .container{max-width:800px;margin:0 auto} img{max-width:100%} h1{font-size:32px;margin-bottom:8px}</style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>{{ title }}</h1>
+      {% if published_at %}<div style="color:#666;margin-bottom:12px">Published: {{ published_at }}</div>{% endif %}
+      {% if excerpt %}<p style="font-style:italic;color:#444">{{ excerpt }}</p>{% endif %}
+      <div>
+        {{ content|safe }}
+      </div>
+    </div>
+  </body>
+</html>

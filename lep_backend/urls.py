@@ -5,6 +5,12 @@ from users.views import DashboardView
 from django.conf import settings
 from django.conf.urls.static import static
 from rest_framework.routers import DefaultRouter
+from django.contrib.sitemaps.views import sitemap
+from django.http import HttpResponse
+
+# Blog sitemap
+from blog.sitemaps import BlogSitemap
+from blog import views as blog_views
 
 router = DefaultRouter()
 
@@ -21,6 +27,15 @@ urlpatterns = [
     path('api/messages/', include('messaging.urls')),
     path('api/auth/', include('djoser.urls')),
     path('api/auth/', include('djoser.urls.jwt')),
+    # Server-rendered blog detail (for crawlers / SEO)
+    path('blog/<slug:slug>/', blog_views.blog_detail_view, name='blog_detail'),
+    # Sitemap
+    path('sitemap.xml', sitemap, {'sitemaps': {'blogs': BlogSitemap()}}, name='django.contrib.sitemaps.views.sitemap'),
+    # robots.txt - points crawlers to sitemap
+    path('robots.txt', lambda request: HttpResponse(
+        f"User-agent: *\nAllow: /\nSitemap: {settings.FRONTEND_URL.rstrip('/')}" + "/sitemap.xml\n",
+        content_type="text/plain"
+    )),
 ]
 
 # Serve media files in development (only when DEBUG=True)
