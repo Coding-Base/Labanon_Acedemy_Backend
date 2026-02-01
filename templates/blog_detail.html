@@ -4,9 +4,26 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>{% if meta_title %}{{ meta_title }}{% else %}{{ title }}{% endif %}</title>
+    {# Primary meta description (falls back to excerpt) #}
     <meta name="description" content="{% if meta_description %}{{ meta_description }}{% else %}{{ excerpt|default:'' }}{% endif %}">
     {% if meta_keywords %}<meta name="keywords" content="{{ meta_keywords }}">{% endif %}
     <link rel="canonical" href="{{ request.build_absolute_uri }}" />
+
+    {# Open Graph / Twitter cards for better social previews and SEO #}
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="{% if meta_title %}{{ meta_title }}{% else %}{{ title }}{% endif %}" />
+    <meta property="og:description" content="{% if meta_description %}{{ meta_description }}{% else %}{{ excerpt|default:'' }}{% endif %}" />
+    <meta property="og:url" content="{{ request.build_absolute_uri }}" />
+    {% if image %}
+      <meta property="og:image" content="{{ image }}" />
+    {% endif %}
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="{% if meta_title %}{{ meta_title }}{% else %}{{ title }}{% endif %}" />
+    <meta name="twitter:description" content="{% if meta_description %}{{ meta_description }}{% else %}{{ excerpt|default:'' }}{% endif %}" />
+    {% if image %}
+      <meta name="twitter:image" content="{{ image }}" />
+    {% endif %}
     <style>body{font-family:Arial,Helvetica,sans-serif;line-height:1.6;color:#111;background:#fff;padding:24px} .container{max-width:800px;margin:0 auto} img{max-width:100%} h1{font-size:32px;margin-bottom:8px}</style>
   </head>
   <body>

@@ -32,8 +32,10 @@ urlpatterns = [
     # Sitemap
     path('sitemap.xml', sitemap, {'sitemaps': {'blogs': BlogSitemap()}}, name='django.contrib.sitemaps.views.sitemap'),
     # robots.txt - points crawlers to sitemap
+    # Serve a minimal robots.txt that points crawlers to the sitemap on the current host
     path('robots.txt', lambda request: HttpResponse(
-        f"User-agent: *\nAllow: /\nSitemap: {settings.FRONTEND_URL.rstrip('/')}" + "/sitemap.xml\n",
+        "User-agent: *\nAllow: /\n" +
+        f"Sitemap: {request.build_absolute_uri('/sitemap.xml')}\n",
         content_type="text/plain"
     )),
 ]
