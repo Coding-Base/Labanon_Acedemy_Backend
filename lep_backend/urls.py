@@ -35,7 +35,7 @@ urlpatterns = [
     # Serve a minimal robots.txt that points crawlers to the sitemap on the current host
     path('robots.txt', lambda request: HttpResponse(
         "User-agent: *\nAllow: /\n" +
-        f"Sitemap: {request.build_absolute_uri('/sitemap.xml')}\n",
+        f"Sitemap: https://{request.get_host()}/sitemap.xml\n",
         content_type="text/plain"
     )),
 ]
