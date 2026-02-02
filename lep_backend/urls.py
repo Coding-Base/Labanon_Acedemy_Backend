@@ -11,8 +11,16 @@ from django.http import HttpResponse
 # Blog sitemap
 from blog.sitemaps import BlogSitemap
 from blog import views as blog_views
+# Frontend sitemap
+from frontend.sitemaps import FrontendSitemap
 
 router = DefaultRouter()
+
+# Sitemaps dictionary for all page types
+sitemaps = {
+    'blogs': BlogSitemap(),
+    'frontend': FrontendSitemap(),
+}
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -29,8 +37,8 @@ urlpatterns = [
     path('api/auth/', include('djoser.urls.jwt')),
     # Server-rendered blog detail (for crawlers / SEO)
     path('blog/<slug:slug>/', blog_views.blog_detail_view, name='blog_detail'),
-    # Sitemap
-    path('sitemap.xml', sitemap, {'sitemaps': {'blogs': BlogSitemap()}}, name='django.contrib.sitemaps.views.sitemap'),
+    # Sitemaps for both frontend and blog content
+    path('sitemap.xml', sitemap, {'sitemaps': sitemaps}, name='django.contrib.sitemaps.views.sitemap'),
     # robots.txt - points crawlers to sitemap
     # Serve a minimal robots.txt that points crawlers to the sitemap on the current host
     path('robots.txt', lambda request: HttpResponse(
