@@ -1,6 +1,11 @@
 from rest_framework import serializers
 from .models import Blog, BlogComment, BlogLike, BlogShare
 import logging
+import os
+import uuid
+from django.core.files.storage import default_storage
+from django.core.files.base import ContentFile
+from django.core.files.uploadedfile import UploadedFile
 
 try:
     import bleach
@@ -44,13 +49,16 @@ class BlogCommentSerializer(serializers.ModelSerializer):
 
 
 class BlogSerializer(serializers.ModelSerializer):
+    # Accept uploaded image via a write-only ImageField to allow multipart/form-data
+    image_file = serializers.ImageField(write_only=True, required=False)
     author_username = serializers.CharField(source='author.username', read_only=True)
     user_liked = serializers.SerializerMethodField()
     comments = serializers.SerializerMethodField()
 
     class Meta:
         model = Blog
-        fields = ['id', 'title', 'slug', 'content', 'image', 'excerpt', 'is_published', 'author', 'author_username', 
+        # include 'image_file' (write-only) so multipart uploads validate
+        fields = ['id', 'title', 'slug', 'content', 'image', 'image_file', 'excerpt', 'is_published', 'author', 'author_username', 
                   'created_at', 'updated_at', 'published_at', 'likes_count', 'comments_count', 'shares_count', 
                   'user_liked', 'comments', 'meta_title', 'meta_description', 'meta_keywords']
         read_only_fields = ['slug', 'author', 'created_at', 'updated_at', 'likes_count', 'comments_count', 'shares_count']
@@ -89,6 +97,30 @@ class BlogSerializer(serializers.ModelSerializer):
         return cleaned
 
     def create(self, validated_data):
+        # Prefer an uploaded file provided under 'image_file' (write-only) when present
+        image_file = validated_data.pop('image_file', None)
+        if image_file and isinstance(image_file, UploadedFile):
+            ext = os.path.splitext(image_file.name)[1] or ''
+            filename = f"blog_images/{uuid.uuid4().hex}{ext}"
+            saved_name = default_storage.save(filename, ContentFile(image_file.read()))
+            try:
+                image_url = default_storage.url(saved_name)
+            except Exception:
+                image_url = saved_name
+            validated_data['image'] = image_url
+        else:
+            # Fallback: if 'image' key contains an UploadedFile (older clients), handle it
+            image = validated_data.get('image')
+            if image and isinstance(image, UploadedFile):
+                ext = os.path.splitext(image.name)[1] or ''
+                filename = f"blog_images/{uuid.uuid4().hex}{ext}"
+                saved_name = default_storage.save(filename, ContentFile(image.read()))
+                try:
+                    image_url = default_storage.url(saved_name)
+                except Exception:
+                    image_url = saved_name
+                validated_data['image'] = image_url
+
         # Sanitize content and excerpt and meta fields
         content = validated_data.get('content', '')
         excerpt = validated_data.get('excerpt', '')
@@ -100,6 +132,29 @@ class BlogSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
     def update(self, instance, validated_data):
+        # Handle uploaded image files on update as well (support 'image_file' write-only field)
+        image_file = validated_data.pop('image_file', None)
+        if image_file and isinstance(image_file, UploadedFile):
+            ext = os.path.splitext(image_file.name)[1] or ''
+            filename = f"blog_images/{uuid.uuid4().hex}{ext}"
+            saved_name = default_storage.save(filename, ContentFile(image_file.read()))
+            try:
+                image_url = default_storage.url(saved_name)
+            except Exception:
+                image_url = saved_name
+            validated_data['image'] = image_url
+        else:
+            image = validated_data.get('image')
+            if image and isinstance(image, UploadedFile):
+                ext = os.path.splitext(image.name)[1] or ''
+                filename = f"blog_images/{uuid.uuid4().hex}{ext}"
+                saved_name = default_storage.save(filename, ContentFile(image.read()))
+                try:
+                    image_url = default_storage.url(saved_name)
+                except Exception:
+                    image_url = saved_name
+                validated_data['image'] = image_url
+
         if 'content' in validated_data:
             validated_data['content'] = self._sanitize_html(validated_data.get('content', ''))
         if 'excerpt' in validated_data and bleach:
