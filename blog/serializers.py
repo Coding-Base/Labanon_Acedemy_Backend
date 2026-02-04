@@ -6,6 +6,7 @@ import uuid
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import UploadedFile
+from django.conf import settings
 
 try:
     import bleach
@@ -102,11 +103,29 @@ class BlogSerializer(serializers.ModelSerializer):
         if image_file and isinstance(image_file, UploadedFile):
             ext = os.path.splitext(image_file.name)[1] or ''
             filename = f"blog_images/{uuid.uuid4().hex}{ext}"
-            saved_name = default_storage.save(filename, ContentFile(image_file.read()))
+            
+            # Use Cloudinary explicitly for blog images
+            use_cloudinary = os.environ.get('USE_CLOUDINARY', 'False').lower() in ('1', 'true', 'yes')
+            
+            if use_cloudinary:
+                try:
+                    from cloudinary_storage.storage import MediaCloudinaryStorage
+                    storage = MediaCloudinaryStorage()
+                except ImportError:
+                    storage = default_storage
+            else:
+                storage = default_storage
+            
+            saved_name = storage.save(filename, ContentFile(image_file.read()))
             try:
-                image_url = default_storage.url(saved_name)
+                image_url = storage.url(saved_name)
             except Exception:
-                image_url = saved_name
+                image_url = f"{getattr(settings, 'MEDIA_URL', '/media/')}{saved_name}"
+            
+            # Prepend site URL if needed
+            if image_url.startswith('/') and getattr(settings, 'SITE_URL', None):
+                image_url = f"{settings.SITE_URL.rstrip('/')}{image_url}"
+            
             validated_data['image'] = image_url
         else:
             # Fallback: if 'image' key contains an UploadedFile (older clients), handle it
@@ -114,11 +133,29 @@ class BlogSerializer(serializers.ModelSerializer):
             if image and isinstance(image, UploadedFile):
                 ext = os.path.splitext(image.name)[1] or ''
                 filename = f"blog_images/{uuid.uuid4().hex}{ext}"
-                saved_name = default_storage.save(filename, ContentFile(image.read()))
+                
+                # Use Cloudinary explicitly for blog images
+                use_cloudinary = os.environ.get('USE_CLOUDINARY', 'False').lower() in ('1', 'true', 'yes')
+                
+                if use_cloudinary:
+                    try:
+                        from cloudinary_storage.storage import MediaCloudinaryStorage
+                        storage = MediaCloudinaryStorage()
+                    except ImportError:
+                        storage = default_storage
+                else:
+                    storage = default_storage
+                
+                saved_name = storage.save(filename, ContentFile(image.read()))
                 try:
-                    image_url = default_storage.url(saved_name)
+                    image_url = storage.url(saved_name)
                 except Exception:
-                    image_url = saved_name
+                    image_url = f"{getattr(settings, 'MEDIA_URL', '/media/')}{saved_name}"
+                
+                # Prepend site URL if needed
+                if image_url.startswith('/') and getattr(settings, 'SITE_URL', None):
+                    image_url = f"{settings.SITE_URL.rstrip('/')}{image_url}"
+                
                 validated_data['image'] = image_url
 
         # Sanitize content and excerpt and meta fields
@@ -137,22 +174,58 @@ class BlogSerializer(serializers.ModelSerializer):
         if image_file and isinstance(image_file, UploadedFile):
             ext = os.path.splitext(image_file.name)[1] or ''
             filename = f"blog_images/{uuid.uuid4().hex}{ext}"
-            saved_name = default_storage.save(filename, ContentFile(image_file.read()))
+            
+            # Use Cloudinary explicitly for blog images
+            use_cloudinary = os.environ.get('USE_CLOUDINARY', 'False').lower() in ('1', 'true', 'yes')
+            
+            if use_cloudinary:
+                try:
+                    from cloudinary_storage.storage import MediaCloudinaryStorage
+                    storage = MediaCloudinaryStorage()
+                except ImportError:
+                    storage = default_storage
+            else:
+                storage = default_storage
+            
+            saved_name = storage.save(filename, ContentFile(image_file.read()))
             try:
-                image_url = default_storage.url(saved_name)
+                image_url = storage.url(saved_name)
             except Exception:
-                image_url = saved_name
+                image_url = f"{getattr(settings, 'MEDIA_URL', '/media/')}{saved_name}"
+            
+            # Prepend site URL if needed
+            if image_url.startswith('/') and getattr(settings, 'SITE_URL', None):
+                image_url = f"{settings.SITE_URL.rstrip('/')}{image_url}"
+            
             validated_data['image'] = image_url
         else:
             image = validated_data.get('image')
             if image and isinstance(image, UploadedFile):
                 ext = os.path.splitext(image.name)[1] or ''
                 filename = f"blog_images/{uuid.uuid4().hex}{ext}"
-                saved_name = default_storage.save(filename, ContentFile(image.read()))
+                
+                # Use Cloudinary explicitly for blog images
+                use_cloudinary = os.environ.get('USE_CLOUDINARY', 'False').lower() in ('1', 'true', 'yes')
+                
+                if use_cloudinary:
+                    try:
+                        from cloudinary_storage.storage import MediaCloudinaryStorage
+                        storage = MediaCloudinaryStorage()
+                    except ImportError:
+                        storage = default_storage
+                else:
+                    storage = default_storage
+                
+                saved_name = storage.save(filename, ContentFile(image.read()))
                 try:
-                    image_url = default_storage.url(saved_name)
+                    image_url = storage.url(saved_name)
                 except Exception:
-                    image_url = saved_name
+                    image_url = f"{getattr(settings, 'MEDIA_URL', '/media/')}{saved_name}"
+                
+                # Prepend site URL if needed
+                if image_url.startswith('/') and getattr(settings, 'SITE_URL', None):
+                    image_url = f"{settings.SITE_URL.rstrip('/')}{image_url}"
+                
                 validated_data['image'] = image_url
 
         if 'content' in validated_data:
