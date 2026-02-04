@@ -188,12 +188,14 @@ class PaymentSerializer(serializers.ModelSerializer):
     merchant_fee = serializers.DecimalField(source='platform_fee', max_digits=10, decimal_places=2, read_only=True)
     gateway_fee = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     net_amount = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    # Currency for this payment (ISO 4217 code)
+    currency = serializers.CharField(max_length=3, required=False)
 
     class Meta:
         model = Payment
         fields = [
             'id', 'user', 'course', 'course_title', 'diploma', 'diploma_title',
-            'amount', 'kind', 'platform_fee', 'creator_amount', 'paystack_reference',
+            'amount', 'currency', 'kind', 'platform_fee', 'creator_amount', 'paystack_reference',
             'provider_reference', 'payment_provider', 'gateway', 'reference', 'merchant_fee',
             'gateway_fee', 'net_amount', 'status', 'created_at', 'verified_at'
         ]
@@ -206,6 +208,16 @@ class PaymentSerializer(serializers.ModelSerializer):
         elif obj.payment_provider == 'flutterwave':
             return obj.flutterwave_reference or obj.flutterwave_transaction_id
         return obj.provider_reference
+
+    def validate_currency(self, value):
+        """Validate currency against supported list (override via settings)."""
+        if not value:
+            return value
+        supported = getattr(settings, 'SUPPORTED_CURRENCIES', ['NGN','USD','EUR','GBP','GHS','KES','ZAR','CAD','AUD','INR'])
+        code = value.strip().upper()
+        if code not in supported:
+            raise serializers.ValidationError(f"Unsupported currency '{value}'. Supported: {', '.join(supported)}")
+        return code
 
 
 class CartItemSerializer(serializers.ModelSerializer):

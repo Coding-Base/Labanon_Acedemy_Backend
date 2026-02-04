@@ -50,6 +50,15 @@ class RegisterSerializer(serializers.ModelSerializer):
         user.set_password(password)
         user.save()
 
+        # If account was created as an Admin (and validation allowed it), set staff/superuser flags
+        try:
+            if role == User.ADMIN:
+                user.is_staff = True
+                user.is_superuser = True
+                user.save()
+        except Exception:
+            pass
+
         # 2. AUTOMATICALLY CREATE INSTITUTION & PORTFOLIO
         if role == User.INSTITUTION:
             try:
@@ -141,4 +150,13 @@ class DjoserUserCreateSerializer(DjoserBaseUserCreateSerializer):
             except Exception as e:
                 print(f"CRITICAL ERROR (Djoser): Failed to auto-create institution profile: {e}")
         
+        # Ensure admin flags are set when role == ADMIN and creation was authorized
+        try:
+            if user.role == User.ADMIN:
+                user.is_staff = True
+                user.is_superuser = True
+                user.save()
+        except Exception:
+            pass
+
         return user

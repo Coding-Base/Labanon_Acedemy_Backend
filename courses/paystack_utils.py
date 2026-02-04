@@ -56,13 +56,14 @@ class PaystackClient:
             # Raise with the parsed response body when available to help debugging
             raise PaystackError(f"Paystack API error: Status {status_code}, Response: {error_body}")
     
-    def initialize_payment(self, email, amount, reference, metadata=None, callback_url=None, recipient_code=None, split_code=None):
+    def initialize_payment(self, email, amount, reference, metadata=None, callback_url=None, recipient_code=None, split_code=None, currency=None):
         """
         Initialize payment transaction.
         
         Args:
             email (str): Customer email
-            amount (int): Amount in kobo (₦100 = 10000 kobo)
+            amount (int): Amount in gateway subunits (e.g., kobo for NGN, cents for USD)
+            currency (str): Optional ISO currency code to send to Paystack (e.g., 'NGN', 'USD')
             reference (str): Unique reference for this transaction
             metadata (dict): Additional metadata to send with transaction
             callback_url (str): URL to redirect to after payment (Paystack will append ?reference=xxx)
@@ -77,6 +78,8 @@ class PaystackClient:
             'amount': amount,
             'reference': reference,
         }
+        if currency:
+            data['currency'] = currency
         if metadata:
             data['metadata'] = metadata
         if callback_url:

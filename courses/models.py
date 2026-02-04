@@ -156,6 +156,8 @@ class Payment(models.Model):
     course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='payments', null=True, blank=True)
     diploma = models.ForeignKey('Diploma', on_delete=models.CASCADE, related_name='payments', null=True, blank=True)
     amount = models.DecimalField(max_digits=10, decimal_places=2)
+    # ISO 4217 currency code for this payment (e.g., 'NGN', 'USD')
+    currency = models.CharField(max_length=3, default='NGN', help_text='ISO 4217 currency code (e.g., NGN, USD)')
     kind = models.CharField(max_length=20, choices=KIND_CHOICES, default=KIND_COURSE)
     platform_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     creator_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="Amount to course/diploma creator")

@@ -86,7 +86,7 @@ class FlutterwaveClient:
             logger.error(f"Flutterwave API request exception: {str(e)}, status={status_code}, body={err_body}")
             raise FlutterwaveError(f"Flutterwave API error: Status {status_code}, Response: {err_body}")
     
-    def initialize_payment(self, email, amount, reference, metadata=None, callback_url=None, full_name='', phone_number='', subaccount_id=None):
+    def initialize_payment(self, email, amount, reference, metadata=None, callback_url=None, full_name='', phone_number='', subaccount_id=None, currency=None):
         """
         Initialize payment transaction for Flutterwave.
         
@@ -106,7 +106,7 @@ class FlutterwaveClient:
         data = {
             'tx_ref': reference,
             'amount': amount,
-            'currency': 'NGN',
+            'currency': (currency or 'NGN'),
             'redirect_url': callback_url or '',
             'customer': {
                 'email': email,

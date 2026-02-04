@@ -198,6 +198,9 @@ class InitiatePaymentView(APIView):
         item_type = request.data.get('item_type')
         item_id = request.data.get('item_id')
         amount = request.data.get('amount')
+        requested_currency = request.data.get('currency')
+        # Optional currency provided by frontend (ISO code)
+        requested_currency = request.data.get('currency')
 
         # Basic required fields: item_type and amount. item_id is required
         # only for course/diploma item types. Allow item_id == 0 for
@@ -235,6 +238,52 @@ class InitiatePaymentView(APIView):
                 return Response({'detail': 'Invalid item_type'}, status=status.HTTP_400_BAD_REQUEST)
 
             amount_decimal = Decimal(str(amount))
+            # Determine currency: frontend > activation fee (if any) > default
+            currency = (requested_currency or '').strip().upper() if requested_currency else None
+            if kind == Payment.KIND_UNLOCK:
+                fee_currency = None
+                try:
+                    exam_id = request.data.get('exam_id') or request.data.get('item_id')
+                    subject_id = request.data.get('subject_id')
+                    if subject_id:
+                        fee = ActivationFee.objects.filter(type=ActivationFee.TYPE_INTERVIEW, subject_id=subject_id).order_by('-updated_at').first()
+                    elif exam_id:
+                        fee = ActivationFee.objects.filter(exam_identifier=str(exam_id)).order_by('-updated_at').first()
+                    else:
+                        fee = ActivationFee.objects.filter(type='exam').order_by('-updated_at').first()
+                    if fee:
+                        fee_currency = fee.currency
+                except Exception:
+                    fee_currency = None
+                if not currency:
+                    currency = (fee_currency or 'NGN').upper()
+            else:
+                if not currency:
+                    currency = getattr(settings, 'DEFAULT_CURRENCY', 'NGN').upper()
+            # Determine currency: frontend > activation fee (if any) > default
+            currency = (requested_currency or '').strip().upper() if requested_currency else None
+            if kind == Payment.KIND_UNLOCK:
+                # Try to fetch configured activation fee currency when not provided
+                fee_currency = None
+                try:
+                    exam_id = request.data.get('exam_id') or request.data.get('item_id')
+                    subject_id = request.data.get('subject_id')
+                    if subject_id:
+                        fee = ActivationFee.objects.filter(type=ActivationFee.TYPE_INTERVIEW, subject_id=subject_id).order_by('-updated_at').first()
+                    elif exam_id:
+                        fee = ActivationFee.objects.filter(exam_identifier=str(exam_id)).order_by('-updated_at').first()
+                    else:
+                        fee = ActivationFee.objects.filter(type='exam').order_by('-updated_at').first()
+                    if fee:
+                        fee_currency = fee.currency
+                except Exception:
+                    fee_currency = None
+                if not currency:
+                    currency = (fee_currency or 'NGN').upper()
+            else:
+                if not currency:
+                    # default currency for payments
+                    currency = getattr(settings, 'DEFAULT_CURRENCY', 'NGN').upper()
             # For activation payments platform receives full amount
             if kind == Payment.KIND_UNLOCK:
                 platform_fee = amount_decimal
@@ -259,7 +308,9 @@ class InitiatePaymentView(APIView):
 
             payment_data = {
                 'user': user,
-                'amount': amount,
+                # store major-unit decimal (e.g., Naira, USD) in Payment.amount
+                'amount': amount_decimal,
+                'currency': currency,
                 'kind': kind,
                 'platform_fee': platform_fee,
                 'creator_amount': creator_amount,
@@ -309,14 +360,20 @@ class InitiatePaymentView(APIView):
                         except PaystackSubAccount.DoesNotExist:
                             logger.warning(f"No Paystack sub-account found for course creator {creator.id}")
 
+                # Convert amount to gateway subunits (Paystack expects kobo for NGN; others typically use cents)
+                if currency == 'NGN':
+                    gateway_amount = naira_to_kobo(amount_decimal)
+                else:
+                    gateway_amount = int((amount_decimal * Decimal('100')).to_integral_value())
+
                 paystack_data = client.initialize_payment(
                     email=user.email,
-                    amount=naira_to_kobo(amount),
+                    amount=gateway_amount,
                     reference=payment_reference,
                     metadata=metadata,
                     callback_url=callback_url,
-                    recipient_code=recipient_code  # Use tutor's subaccount
-
+                    recipient_code=recipient_code,  # Use tutor's subaccount
+                    currency=currency
                 )
 
                 return Response({
@@ -879,7 +936,8 @@ class InitiateFlutterwavePaymentView(APIView):
 
             payment_data = {
                 'user': user,
-                'amount': amount,
+                'amount': amount_decimal,
+                'currency': currency,
                 'kind': kind,
                 'platform_fee': platform_fee,
                 'creator_amount': creator_amount,
@@ -908,6 +966,7 @@ class InitiateFlutterwavePaymentView(APIView):
                     'item_id': item_id,
                     'user_id': user.id,
                 }
+                metadata['currency'] = currency
                 if item_type == 'activation' and activation_meta:
                     metadata['activation'] = activation_meta
                 
@@ -931,14 +990,16 @@ class InitiateFlutterwavePaymentView(APIView):
                 
                 flutterwave_data = client.initialize_payment(
                     email=user.email,
-                    amount=amount,
+                    amount=float(amount_decimal),
                     reference=payment_reference,
                     metadata=metadata,
                     callback_url=callback_url,
                     full_name=f'{user.first_name} {user.last_name}' if user.first_name or user.last_name else user.username,
                     phone_number=getattr(user, 'phone', '') or '',
-                    subaccount_id=subaccount_id  # Use tutor's subaccount
+                    subaccount_id=subaccount_id,  # Use tutor's subaccount
+                    currency=currency
                 )
+                
 
                 return Response({
                     'payment_id': payment.id,
