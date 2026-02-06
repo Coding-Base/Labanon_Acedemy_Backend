@@ -8,6 +8,50 @@ from .models import Blog, BlogComment, BlogLike, BlogShare
 from .serializers import BlogSerializer, BlogCommentSerializer, BlogLikeSerializer, BlogShareSerializer
 from users.permissions import IsMasterAdmin
 from django.shortcuts import render, get_object_or_404
+from rest_framework.decorators import api_view, permission_classes, parser_classes
+from rest_framework.parsers import MultiPartParser, FormParser
+import os
+import uuid
+import logging
+from django.core.files.storage import default_storage
+from django.core.files.base import ContentFile
+from django.conf import settings
+
+@api_view(['POST'])
+@permission_classes([IsMasterAdmin])
+@parser_classes([MultiPartParser, FormParser])
+def upload_blog_image(request):
+    """Upload an image used inside blog content and return accessible URL."""
+    file = request.FILES.get('image') or request.FILES.get('file')
+    if not file:
+        return Response({'detail': 'No file provided'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        ext = os.path.splitext(file.name)[1] or ''
+        filename = f"blog_images/{uuid.uuid4().hex}{ext}"
+        use_cloudinary = os.environ.get('USE_CLOUDINARY', 'False').lower() in ('1', 'true', 'yes')
+        if use_cloudinary:
+            try:
+                from cloudinary_storage.storage import MediaCloudinaryStorage
+                storage = MediaCloudinaryStorage()
+            except Exception:
+                storage = default_storage
+        else:
+            storage = default_storage
+
+        saved_name = storage.save(filename, ContentFile(file.read()))
+        try:
+            image_url = storage.url(saved_name)
+        except Exception:
+            image_url = f"{getattr(settings, 'MEDIA_URL', '/media/')}{saved_name}"
+
+        if image_url.startswith('/') and getattr(settings, 'SITE_URL', None):
+            image_url = f"{settings.SITE_URL.rstrip('/')}{image_url}"
+
+        return Response({'url': image_url})
+    except Exception as e:
+        logging.getLogger(__name__).exception('Failed to upload blog image')
+        return Response({'detail': 'Failed to save image'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class StandardResultsSetPagination(PageNumberPagination):
@@ -110,10 +154,11 @@ class BlogViewSet(viewsets.ModelViewSet):
 
 
 class BlogCommentViewSet(viewsets.ModelViewSet):
-    """Manage comments on blog posts"""
+    """Manage comments on blog posts. Allow anonymous posting with an author_name."""
     queryset = BlogComment.objects.all()
     serializer_class = BlogCommentSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    # Allow anyone to submit comments (we will attach request.user when available)
+    permission_classes = [permissions.AllowAny]
 
     def get_queryset(self):
         blog_id = self.request.query_params.get('blog_id')
@@ -122,7 +167,14 @@ class BlogCommentViewSet(viewsets.ModelViewSet):
         return BlogComment.objects.filter(parent_comment__isnull=True).order_by('-created_at')
 
     def perform_create(self, serializer):
-        serializer.save(author=self.request.user)
+        # If authenticated, set the author FK; otherwise accept an author_name field
+        if self.request.user and self.request.user.is_authenticated:
+            serializer.save(author=self.request.user)
+        else:
+            # Pop author_name if provided and save as field on the comment
+            author_name = self.request.data.get('author_name') or serializer.validated_data.get('author_name') if hasattr(serializer, 'validated_data') else self.request.data.get('author_name')
+            serializer.save(author=None, author_name=(author_name or '').strip())
+
         blog = serializer.instance.blog
         blog.comments_count += 1
         blog.save()

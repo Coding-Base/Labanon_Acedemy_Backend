@@ -40,7 +40,9 @@ class Blog(models.Model):
 class BlogComment(models.Model):
     """Comments on blog posts with support for nested replies"""
     blog = models.ForeignKey(Blog, on_delete=models.CASCADE, related_name='comments')
-    author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='blog_comments')
+    # Allow anonymous comments: author may be null and a display name can be provided
+    author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='blog_comments', null=True, blank=True)
+    author_name = models.CharField(max_length=100, blank=True)
     content = models.TextField()
     parent_comment = models.ForeignKey('self', on_delete=models.CASCADE, null=True, blank=True, related_name='replies')
     likes_count = models.IntegerField(default=0)
@@ -51,7 +53,8 @@ class BlogComment(models.Model):
         ordering = ['-created_at']
 
     def __str__(self):
-        return f"Comment by {self.author.username} on {self.blog.title}"
+        author_display = self.author.username if self.author else (self.author_name or 'Anonymous')
+        return f"Comment by {author_display} on {self.blog.title}"
 
 
 class BlogLike(models.Model):
