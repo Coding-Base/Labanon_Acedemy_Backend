@@ -22,14 +22,17 @@ from users.models import User
 from .models import (
     Institution, Course, Module, Lesson, Enrollment, CartItem, 
     Diploma, DiplomaEnrollment, Portfolio, PortfolioGalleryItem, 
-    Certificate, Payment, GospelVideo
+    Certificate, Payment, GospelVideo,
+    ModuleQuiz, QuizQuestion, QuizOption, ModuleQuizAttempt, QuizAnswer
 )
 from .serializers import (
     InstitutionSerializer, CourseSerializer, ModuleSerializer, 
     LessonSerializer, EnrollmentSerializer, CartItemSerializer, 
     DiplomaSerializer, DiplomaEnrollmentSerializer, PortfolioSerializer, 
     PortfolioGalleryItemSerializer, CertificateSerializer, PaymentSerializer,
-    GospelVideoSerializer
+    GospelVideoSerializer,
+    ModuleQuizSerializer, QuizQuestionSerializer, QuizOptionSerializer,
+    ModuleQuizAttemptSerializer, ModuleQuizAttemptSubmitSerializer
 )
 from .permissions import IsCreatorOrTeacherOrAdmin
 from rest_framework.decorators import action
@@ -798,3 +801,176 @@ class GospelVideoViewSet(viewsets.ModelViewSet):
             return Response(serializer.data)
         return Response(None)
 
+
+# ========== MODULE QUIZ VIEWSETS (DISTINCT FROM CBT) ==========
+
+class ModuleQuizViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing module quizzes.
+    
+    - Tutors/admins can create and edit quizzes.
+    - Students can view quiz questions and submit answers.
+    - This is SEPARATE from CBT exams.
+    """
+    queryset = ModuleQuiz.objects.all()
+    serializer_class = ModuleQuizSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        # Filter quizzes by course
+        course_id = self.request.query_params.get('course_id')
+        if course_id:
+            return ModuleQuiz.objects.filter(module__course_id=course_id)
+        return ModuleQuiz.objects.all()
+    
+    def create(self, request, *args, **kwargs):
+        """Tutors/admins create a quiz for a module."""
+        # Check permission: user must be creator of the course or admin
+        module_id = request.data.get('module')
+        try:
+            module = Module.objects.get(id=module_id)
+            course = module.course
+            if course.creator != request.user and not request.user.is_staff:
+                return Response({'detail': 'Not authorized'}, status=status.HTTP_403_FORBIDDEN)
+        except Module.DoesNotExist:
+            return Response({'detail': 'Module not found'}, status=status.HTTP_404_NOT_FOUND)
+        # If a quiz already exists for this module, update it instead of creating duplicate
+        existing = ModuleQuiz.objects.filter(module=module).first()
+        if existing:
+            serializer = self.get_serializer(existing, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        return super().create(request, *args, **kwargs)
+    
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
+    def submit_answers(self, request, pk=None):
+        """
+        Student submits quiz answers.
+        POST body: { "answers": [{"question_id": int, "option_id": int}, ...] }
+        """
+        quiz = self.get_object()
+        user = request.user
+        serializer = ModuleQuizAttemptSubmitSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        answers_data = serializer.validated_data['answers']
+        
+        # Create or update attempt
+        attempt, created = ModuleQuizAttempt.objects.get_or_create(
+            user=user, quiz=quiz,
+            defaults={'total_points': quiz.calculate_total_points()}
+        )
+        
+        # Clear previous answers if retaking
+        if not created:
+            attempt.answers.all().delete()
+        
+        # Process answers
+        earned_points = 0
+        for answer_data in answers_data:
+            question_id = answer_data.get('question_id')
+            option_id = answer_data.get('option_id')
+            
+            try:
+                question = QuizQuestion.objects.get(id=question_id, quiz=quiz)
+                option = QuizOption.objects.get(id=option_id, question=question)
+                is_correct = option.is_correct
+                points = question.points if is_correct else 0
+                earned_points += points
+                
+                QuizAnswer.objects.create(
+                    attempt=attempt,
+                    question=question,
+                    selected_option=option,
+                    is_correct=is_correct,
+                    points_earned=points
+                )
+            except (QuizQuestion.DoesNotExist, QuizOption.DoesNotExist):
+                return Response({'detail': 'Invalid question or option'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Calculate score as percentage
+        total_points = attempt.total_points or 1  # Avoid division by zero
+        score_percentage = round((earned_points / total_points) * 100, 2)
+        passed = score_percentage >= quiz.passing_score
+        
+        attempt.submitted_at = timezone.now()
+        attempt.score = score_percentage
+        attempt.earned_points = earned_points
+        attempt.passed = passed
+        attempt.save()
+        
+        attempt_serializer = ModuleQuizAttemptSerializer(attempt)
+        return Response(attempt_serializer.data, status=status.HTTP_201_CREATED)
+    
+    @action(detail=True, methods=['get'], permission_classes=[permissions.IsAuthenticated])
+    def my_attempt(self, request, pk=None):
+        """Get current user's attempt at this quiz."""
+        quiz = self.get_object()
+        try:
+            attempt = ModuleQuizAttempt.objects.get(user=request.user, quiz=quiz)
+            serializer = ModuleQuizAttemptSerializer(attempt)
+            return Response(serializer.data)
+        except ModuleQuizAttempt.DoesNotExist:
+            return Response({'detail': 'No attempt found'}, status=status.HTTP_404_NOT_FOUND)
+
+
+class QuizQuestionViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing quiz questions within a module quiz.
+    """
+    queryset = QuizQuestion.objects.all()
+    serializer_class = QuizQuestionSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        quiz_id = self.request.query_params.get('quiz_id')
+        if quiz_id:
+            return QuizQuestion.objects.filter(quiz_id=quiz_id).order_by('order')
+        return QuizQuestion.objects.all()
+    
+    def create(self, request, *args, **kwargs):
+        """Only course creators/admins can add questions."""
+        quiz_id = request.data.get('quiz')
+        try:
+            quiz = ModuleQuiz.objects.get(id=quiz_id)
+            course = quiz.module.course
+            if course.creator != request.user and not request.user.is_staff:
+                return Response({'detail': 'Not authorized'}, status=status.HTTP_403_FORBIDDEN)
+        except ModuleQuiz.DoesNotExist:
+            return Response({'detail': 'Quiz not found'}, status=status.HTTP_404_NOT_FOUND)
+        
+        return super().create(request, *args, **kwargs)
+
+
+class QuizOptionViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for managing quiz options (answer choices).
+    """
+    queryset = QuizOption.objects.all()
+    serializer_class = QuizOptionSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        question_id = self.request.query_params.get('question_id')
+        if question_id:
+            return QuizOption.objects.filter(question_id=question_id).order_by('order')
+        return QuizOption.objects.all()
+
+
+class ModuleQuizAttemptViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    ViewSet for viewing quiz attempts (read-only for students to see results).
+    Submission happens via the submit_answers action on ModuleQuizViewSet.
+    """
+    queryset = ModuleQuizAttempt.objects.all()
+    serializer_class = ModuleQuizAttemptSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        # Students see only their own attempts
+        if not self.request.user.is_staff:
+            return ModuleQuizAttempt.objects.filter(user=self.request.user)
+        return ModuleQuizAttempt.objects.all()

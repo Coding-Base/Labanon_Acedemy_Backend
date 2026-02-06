@@ -6,7 +6,8 @@ from .views import (
     DiplomaEnrollmentViewSet, PortfolioViewSet, PortfolioGalleryItemViewSet,
     CertificateViewSet, SignatureView, LogoView, TutorApplicationView,
     LessonMediaUploadView, CourseImageUploadView, TutorsLeaderboardView,
-    GospelVideoViewSet
+    GospelVideoViewSet,
+    ModuleQuizViewSet, QuizQuestionViewSet, QuizOptionViewSet, ModuleQuizAttemptViewSet
 )
 from .payment_views import (
     InitiateUnlockView, PaystackWebhookView, InitiatePaymentView, 
@@ -76,5 +77,9 @@ router.register(r'certificates', CertificateViewSet, basename='certificate')
 router.register(r'subaccounts', SubAccountViewSet, basename='subaccount')
 router.register(r'flutterwave-subaccounts', FlutterwaveSubAccountViewSet, basename='flutterwave-subaccount')
 router.register(r'gospel-videos', GospelVideoViewSet, basename='gospel-video')
+router.register(r'module-quizzes', ModuleQuizViewSet, basename='module-quiz')
+router.register(r'quiz-questions', QuizQuestionViewSet, basename='quiz-question')
+router.register(r'quiz-options', QuizOptionViewSet, basename='quiz-option')
+router.register(r'quiz-attempts', ModuleQuizAttemptViewSet, basename='quiz-attempt')
 
 urlpatterns += router.urls

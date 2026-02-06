@@ -26,6 +26,18 @@ class Institution(models.Model):
 
 
 class Course(models.Model):
+    COURSE_TYPE_CHOICES = [
+        ('beginner', 'Beginner Course'),
+        ('intermediate', 'Intermediate Course'),
+        ('advanced', 'Advanced Course'),
+        ('master', 'Master Course'),
+        ('specialized', 'Specialized Course'),
+        ('certification', 'Certification Program'),
+        ('bootcamp', 'Bootcamp'),
+        ('workshop', 'Workshop'),
+        ('other', 'Other'),
+    ]
+
     creator = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='courses')
     institution = models.ForeignKey(Institution, on_delete=models.SET_NULL, null=True, blank=True, related_name='courses')
     title = models.CharField(max_length=255)
@@ -33,6 +45,12 @@ class Course(models.Model):
     image = models.CharField(max_length=512, blank=True)
     description = models.TextField(blank=True)
     price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    # Course type badge
+    course_type = models.CharField(max_length=50, choices=COURSE_TYPE_CHOICES, default='other', help_text='Type/badge for course listing')
+    # Course level and outcomes
+    level = models.CharField(max_length=50, default='Beginner', blank=True, help_text='Course difficulty level')
+    outcome = models.TextField(blank=True, help_text='What students will learn')
+    required_tools = models.TextField(blank=True, help_text='Tools/software required')
     # scheduled course support
     start_date = models.DateField(null=True, blank=True)
     end_date = models.DateField(null=True, blank=True)
@@ -355,6 +373,97 @@ class FlutterwaveSubAccount(models.Model):
 
     class Meta:
         verbose_name_plural = "Flutterwave Sub-accounts"
+
+
+class ModuleQuiz(models.Model):
+    """Quiz for a module that students must complete before moving to next module.
+    
+    This is DISTINCT from CBT exams. These are inline module quizzes within courses.
+    """
+    module = models.OneToOneField(Module, on_delete=models.CASCADE, related_name='quiz', help_text='Each module can have one quiz')
+    title = models.CharField(max_length=255, default='Module Quiz')
+    description = models.TextField(blank=True)
+    passing_score = models.PositiveIntegerField(default=70, help_text='Minimum percentage score to pass (0-100)')
+    is_required = models.BooleanField(default=True, help_text='Must student pass this quiz to proceed to next module?')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Module Quiz'
+        verbose_name_plural = 'Module Quizzes'
+
+    def __str__(self):
+        return f"Quiz: {self.module.title}"
+
+    def calculate_total_points(self):
+        """Calculate total possible points for this quiz."""
+        return sum(q.points for q in self.questions.all()) or 0
+
+
+class QuizQuestion(models.Model):
+    """A question within a module quiz."""
+    quiz = models.ForeignKey(ModuleQuiz, on_delete=models.CASCADE, related_name='questions')
+    text = models.TextField(help_text='Question text/prompt')
+    order = models.PositiveIntegerField(default=0, help_text='Display order within quiz')
+    points = models.PositiveIntegerField(default=1, help_text='Points awarded for correct answer')
+    explanation = models.TextField(blank=True, help_text='Explanation shown after answering')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['order']
+        verbose_name = 'Quiz Question'
+
+    def __str__(self):
+        return f"Q{self.order + 1}: {self.text[:50]}"
+
+
+class QuizOption(models.Model):
+    """An option/choice for a quiz question."""
+    question = models.ForeignKey(QuizQuestion, on_delete=models.CASCADE, related_name='options')
+    text = models.CharField(max_length=500, help_text='Option text')
+    is_correct = models.BooleanField(default=False, help_text='Is this the correct answer?')
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ['order']
+        verbose_name = 'Quiz Option'
+
+    def __str__(self):
+        return f"{self.question.text[:30]} - {self.text[:50]}"
+
+
+class ModuleQuizAttempt(models.Model):
+    """Records a student's attempt at a module quiz."""
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='quiz_attempts')
+    quiz = models.ForeignKey(ModuleQuiz, on_delete=models.CASCADE, related_name='attempts')
+    started_at = models.DateTimeField(auto_now_add=True)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    score = models.PositiveIntegerField(null=True, blank=True, help_text='Score achieved (0-100 percentage)')
+    total_points = models.PositiveIntegerField(default=0)
+    earned_points = models.PositiveIntegerField(default=0)
+    passed = models.BooleanField(default=False)
+
+    class Meta:
+        unique_together = ('user', 'quiz')
+        verbose_name = 'Module Quiz Attempt'
+
+    def __str__(self):
+        return f"{self.user.username} - {self.quiz.module.title} (Score: {self.score}%)"
+
+
+class QuizAnswer(models.Model):
+    """Records student's answer to a specific quiz question."""
+    attempt = models.ForeignKey(ModuleQuizAttempt, on_delete=models.CASCADE, related_name='answers')
+    question = models.ForeignKey(QuizQuestion, on_delete=models.CASCADE)
+    selected_option = models.ForeignKey(QuizOption, on_delete=models.SET_NULL, null=True, blank=True, help_text='The option the student selected')
+    is_correct = models.BooleanField(default=False)
+    points_earned = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        unique_together = ('attempt', 'question')
+
+    def __str__(self):
+        return f"{self.attempt.user.username} - Q{self.question.order + 1}"
 
 
 class Certificate(models.Model):

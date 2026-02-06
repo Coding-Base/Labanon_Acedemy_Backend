@@ -10,7 +10,8 @@ import os
 from .models import (
     Institution, Course, Module, Lesson, Enrollment, Payment, 
     CartItem, Diploma, DiplomaEnrollment, Portfolio, 
-    PortfolioGalleryItem, Certificate, Review, GospelVideo
+    PortfolioGalleryItem, Certificate, Review, GospelVideo,
+    ModuleQuiz, QuizQuestion, QuizOption, ModuleQuizAttempt, QuizAnswer
 )
 
 class InstitutionSerializer(serializers.ModelSerializer):
@@ -49,10 +50,21 @@ class LessonSerializer(serializers.ModelSerializer):
 
 class ModuleSerializer(serializers.ModelSerializer):
     lessons = LessonSerializer(many=True, read_only=True)
+    quiz = serializers.SerializerMethodField()
 
     class Meta:
         model = Module
-        fields = ['id', 'course', 'title', 'order', 'lessons']
+        fields = ['id', 'course', 'title', 'order', 'lessons', 'quiz']
+
+    def get_quiz(self, obj):
+        try:
+            quiz = getattr(obj, 'quiz', None)
+            if not quiz:
+                return None
+            # ModuleQuizSerializer is defined later in this module; at runtime it will be available
+            return ModuleQuizSerializer(quiz, context=self.context).data
+        except Exception:
+            return None
 
 
 class CourseSerializer(serializers.ModelSerializer):
@@ -78,7 +90,8 @@ class CourseSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'title', 'slug', 'image', 'image_upload', 'description', 'price', 
             'published', 'creator', 'creator_username', 
-            'institution', 'institution_name',  # <--- FIXED: Added 'institution' ID here
+            'institution', 'institution_name',
+            'course_type', 'level', 'outcome', 'required_tools',
             'created_at', 'modules', 'stats', 
             'start_date', 'end_date', 'meeting_time', 'meeting_place', 'meeting_link'
         ]
@@ -376,3 +389,117 @@ class GospelVideoSerializer(serializers.ModelSerializer):
             'is_active', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+# ========== MODULE QUIZ SERIALIZERS (DISTINCT FROM CBT) ==========
+
+class QuizOptionSerializer(serializers.ModelSerializer):
+    """Serializer for quiz options (used nested under questions)."""
+    id = serializers.IntegerField(read_only=True)
+    # Allow creating/updating via API by specifying the parent question
+    question = serializers.PrimaryKeyRelatedField(queryset=QuizQuestion.objects.all(), write_only=True, required=False)
+
+    class Meta:
+        model = QuizOption
+        fields = ['id', 'question', 'text', 'is_correct', 'order']
+
+
+class QuizQuestionSerializer(serializers.ModelSerializer):
+    """Serializer for quiz questions with nested options."""
+    id = serializers.IntegerField(read_only=True)
+    # Allow creating/updating via API by specifying parent quiz
+    quiz = serializers.PrimaryKeyRelatedField(queryset=ModuleQuiz.objects.all(), write_only=True, required=False)
+    options = QuizOptionSerializer(many=True, required=False)
+
+    class Meta:
+        model = QuizQuestion
+        fields = ['id', 'quiz', 'text', 'order', 'points', 'explanation', 'options']
+
+
+class ModuleQuizSerializer(serializers.ModelSerializer):
+    """Full quiz serializer with nested questions and options. Supports create/update with nested data."""
+    id = serializers.IntegerField(read_only=True)
+    questions = QuizQuestionSerializer(many=True, required=False)
+    total_points = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ModuleQuiz
+        fields = ['id', 'module', 'title', 'description', 'passing_score', 'is_required', 'questions', 'total_points']
+
+    def get_total_points(self, obj):
+        return obj.calculate_total_points()
+
+    def _create_or_update_questions(self, quiz, questions_data):
+        # Simplest approach: remove existing questions and recreate
+        quiz.questions.all().delete()
+        for qi, qdata in enumerate(questions_data):
+            options = qdata.get('options', []) if isinstance(qdata, dict) else []
+            question = QuizQuestion.objects.create(
+                quiz=quiz,
+                text=qdata.get('text', ''),
+                points=qdata.get('points', 1) or 1,
+                explanation=qdata.get('explanation', ''),
+                order=qi
+            )
+            for oi, odata in enumerate(options):
+                QuizOption.objects.create(
+                    question=question,
+                    text=odata.get('text', ''),
+                    is_correct=odata.get('is_correct', False),
+                    order=oi
+                )
+
+    def create(self, validated_data):
+        questions_data = validated_data.pop('questions', [])
+        quiz = ModuleQuiz.objects.create(**validated_data)
+        if questions_data:
+            self._create_or_update_questions(quiz, questions_data)
+        return quiz
+
+    def update(self, instance, validated_data):
+        questions_data = validated_data.pop('questions', None)
+        for attr, val in validated_data.items():
+            setattr(instance, attr, val)
+        instance.save()
+        if questions_data is not None:
+            self._create_or_update_questions(instance, questions_data)
+        return instance
+
+
+class QuizAnswerSerializer(serializers.ModelSerializer):
+    """Records student's answer choice for a question."""
+    
+    class Meta:
+        model = QuizAnswer
+        fields = ['id', 'question', 'selected_option', 'is_correct', 'points_earned']
+        read_only_fields = ['is_correct', 'points_earned']
+
+
+class ModuleQuizAttemptSubmitSerializer(serializers.Serializer):
+    """Serializer for submitting quiz answers."""
+    answers = serializers.ListField(
+        child=serializers.DictField(
+            child=serializers.IntegerField(),
+            help_text='Each dict: {question_id, option_id}'
+        ),
+        help_text='List of {question_id: int, option_id: int} dicts'
+    )
+
+
+class ModuleQuizAttemptSerializer(serializers.ModelSerializer):
+    """Serializer for quiz attempt results."""
+    answers = QuizAnswerSerializer(many=True, read_only=True)
+    quiz_title = serializers.CharField(source='quiz.title', read_only=True)
+    module_title = serializers.CharField(source='quiz.module.title', read_only=True)
+    
+    class Meta:
+        model = ModuleQuizAttempt
+        fields = [
+            'id', 'user', 'quiz', 'quiz_title', 'module_title', 
+            'started_at', 'submitted_at', 'score', 'total_points', 
+            'earned_points', 'passed', 'answers'
+        ]
+        read_only_fields = [
+            'id', 'user', 'started_at', 'submitted_at', 'score', 
+            'total_points', 'earned_points', 'passed'
+        ]

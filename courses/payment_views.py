@@ -893,6 +893,7 @@ class InitiateFlutterwavePaymentView(APIView):
         item_type = request.data.get('item_type')
         item_id = request.data.get('item_id')
         amount = request.data.get('amount')
+        requested_currency = request.data.get('currency')
 
         # For Flutterwave initiation require item_type and amount; require
         # item_id only for course/diploma (activation not supported here).
@@ -925,6 +926,30 @@ class InitiateFlutterwavePaymentView(APIView):
                 return Response({'detail': 'Invalid item_type'}, status=status.HTTP_400_BAD_REQUEST)
 
             amount_decimal = Decimal(str(amount))
+            
+            # Determine currency: frontend > activation fee (if any) > default
+            currency = (requested_currency or '').strip().upper() if requested_currency else None
+            if kind == Payment.KIND_UNLOCK:
+                fee_currency = None
+                try:
+                    exam_id = request.data.get('exam_id') or request.data.get('item_id')
+                    subject_id = request.data.get('subject_id')
+                    if subject_id:
+                        fee = ActivationFee.objects.filter(type=ActivationFee.TYPE_INTERVIEW, subject_id=subject_id).order_by('-updated_at').first()
+                    elif exam_id:
+                        fee = ActivationFee.objects.filter(exam_identifier=str(exam_id)).order_by('-updated_at').first()
+                    else:
+                        fee = ActivationFee.objects.filter(type='exam').order_by('-updated_at').first()
+                    if fee:
+                        fee_currency = fee.currency
+                except Exception:
+                    fee_currency = None
+                if not currency:
+                    currency = (fee_currency or 'NGN').upper()
+            else:
+                if not currency:
+                    currency = getattr(settings, 'DEFAULT_CURRENCY', 'NGN').upper()
+            
             if item_type == 'activation' or kind == Payment.KIND_UNLOCK:
                 # platform receives full amount for unlocks
                 platform_fee = amount_decimal

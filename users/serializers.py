@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from django.core.validators import RegexValidator
 from django.conf import settings
 from .models import User
 import uuid
@@ -20,6 +21,17 @@ class UserSerializer(serializers.ModelSerializer):
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
     admin_secret = serializers.CharField(write_only=True, required=False, allow_blank=True)
+
+    # Allow spaces in username in addition to the default set of allowed characters
+    username = serializers.CharField(
+        required=True,
+        validators=[
+            RegexValidator(
+                regex=r'^[\w.@+\- ]+$',
+                message="Enter a valid username. This value may contain only letters, numbers, spaces and @/./+/-/_ characters."
+            )
+        ]
+    )
 
     class Meta:
         model = User
@@ -97,6 +109,17 @@ class DjoserUserCreateSerializer(DjoserBaseUserCreateSerializer):
     role = serializers.ChoiceField(choices=User.ROLE_CHOICES, default=User.STUDENT)
     institution_name = serializers.CharField(allow_blank=True, required=False)
     admin_secret = serializers.CharField(write_only=True, required=False, allow_blank=True)
+
+    # Override the username field coming from Djoser to permit spaces
+    username = serializers.CharField(
+        required=True,
+        validators=[
+            RegexValidator(
+                regex=r'^[\w.@+\- ]+$',
+                message="Enter a valid username. This value may contain only letters, numbers, spaces and @/./+/-/_ characters."
+            )
+        ]
+    )
 
     class Meta(DjoserBaseUserCreateSerializer.Meta):
         model = User
