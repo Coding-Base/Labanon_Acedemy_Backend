@@ -309,3 +309,10 @@ PAYSTACK_PUBLIC_KEY = os.environ.get('PAYSTACK_PUBLIC_KEY')
 FLUTTERWAVE_SECRET_KEY = os.environ.get('FLUTTERWAVE_SECRET_KEY')
 FLUTTERWAVE_PUBLIC_KEY = os.environ.get('FLUTTERWAVE_PUBLIC_KEY')
 FLUTTERWAVE_ENCRYPTION_KEY = os.environ.get('FLUTTERWAVE_ENCRYPTION_KEY')
+
+# ------------------ Google Analytics (GA4) ------------------
+# Numeric GA4 property ID (not the G- measurement id). Example: 123456789
+GA4_PROPERTY_ID = os.environ.get('GA4_PROPERTY_ID')
+# Path where the service account JSON will be written on the server/container.
+# We prefer writing this file at container start from a secret env var (hex/base64).
+GA_SERVICE_ACCOUNT_FILE = os.environ.get('GA_SERVICE_ACCOUNT_FILE', '/app/ga_service_account.json')
