@@ -64,3 +64,4 @@ wcwidth==0.2.14
 whitenoise>=6.6.0  # ADDED
 google-analytics-data
 google-auth
+bleach
