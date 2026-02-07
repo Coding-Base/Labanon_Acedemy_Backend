@@ -316,3 +316,27 @@ GA4_PROPERTY_ID = os.environ.get('GA4_PROPERTY_ID')
 # Path where the service account JSON will be written on the server/container.
 # We prefer writing this file at container start from a secret env var (hex/base64).
 GA_SERVICE_ACCOUNT_FILE = os.environ.get('GA_SERVICE_ACCOUNT_FILE', '/app/ga_service_account.json')
+
+# If the expected GA service-account JSON file does not exist, attempt to
+# write it from an environment secret. Prefer hex (`GA_SERVICE_ACCOUNT_HEX`)
+# or base64 (`GA_SERVICE_ACCOUNT_JSON`). This helps Dokploy/Docker deployments
+# where writing the secret from an env var at container start is easiest.
+if GA_SERVICE_ACCOUNT_FILE and not os.path.exists(GA_SERVICE_ACCOUNT_FILE):
+    try:
+        ga_hex = os.environ.get('GA_SERVICE_ACCOUNT_HEX')
+        ga_b64 = os.environ.get('GA_SERVICE_ACCOUNT_JSON') or os.environ.get('GA_SERVICE_ACCOUNT_BASE64')
+        if ga_hex:
+            import binascii
+            with open(GA_SERVICE_ACCOUNT_FILE, 'wb') as f:
+                f.write(binascii.unhexlify(ga_hex))
+        elif ga_b64:
+            import base64
+            with open(GA_SERVICE_ACCOUNT_FILE, 'wb') as f:
+                f.write(base64.b64decode(ga_b64))
+    except Exception as _e:
+        # Avoid crashing import-time; log to stderr so deploy logs capture the error
+        try:
+            import sys
+            print(f"Warning: failed to write GA service account file: {_e}", file=sys.stderr)
+        except Exception:
+            pass
