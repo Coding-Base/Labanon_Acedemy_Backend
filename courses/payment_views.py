@@ -29,6 +29,12 @@ from .models import PaymentSplitConfig
 from .paystack_utils import PaystackClient, naira_to_kobo, calculate_split, generate_payment_reference, PaystackError
 from .flutterwave_utils import FlutterwaveClient, FlutterwaveError, generate_payment_reference as generate_flutterwave_reference
 from .serializers import PaymentSerializer
+try:
+    from google.analytics.data_v1beta import BetaAnalyticsDataClient
+    from google.analytics.data_v1beta.types import DateRange, Metric, Dimension, RunReportRequest
+    GA_CLIENT_AVAILABLE = True
+except Exception:
+    GA_CLIENT_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -489,7 +495,7 @@ class VerifyPaymentView(APIView):
                                             except Exception as ue:
                                                 logger.error(f"Failed to mark user unlocked: {str(ue)}")
                                     except Exception:
-                                        pass
+                                        logger.exception("Activation processing error")
 
                                     if exam_identifier or subject_id:
                                         ActivationUnlock.objects.get_or_create(
@@ -577,6 +583,105 @@ class ActivationFeeView(APIView):
         except Exception as e:
             logger.error(f"Failed to fetch activation fee: {str(e)}")
             return Response({'detail': 'Error fetching fee'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class AdminAnalyticsView(APIView):
+    """Proxy view for admin to fetch Google Analytics (GA4) reports via service account."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        if not (user.is_staff or user.is_superuser):
+            return Response({'detail': 'Not allowed'}, status=status.HTTP_403_FORBIDDEN)
+
+        if not GA_CLIENT_AVAILABLE:
+            return Response({'detail': 'Google Analytics client not installed on server'}, status=status.HTTP_501_NOT_IMPLEMENTED)
+
+        from django.conf import settings
+
+        property_id = getattr(settings, 'GA4_PROPERTY_ID', None)
+        service_account_file = getattr(settings, 'GA_SERVICE_ACCOUNT_FILE', None)
+        if not property_id or not service_account_file:
+            return Response({'detail': 'GA4_PROPERTY_ID or GA_SERVICE_ACCOUNT_FILE not configured'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            client = BetaAnalyticsDataClient.from_service_account_file(service_account_file)
+            prop = f"properties/{property_id}"
+
+            # Summary report: users, activeUsers, sessions, screenPageViews over last 28 days
+            summary_req = RunReportRequest(
+                property=prop,
+                date_ranges=[DateRange(start_date='28daysAgo', end_date='today')],
+                metrics=[Metric(name='activeUsers'), Metric(name='totalUsers'), Metric(name='sessions'), Metric(name='screenPageViews')]
+            )
+            summary_resp = client.run_report(request=summary_req)
+
+            summary = {}
+            if summary_resp.rows:
+                vals = summary_resp.rows[0].metric_values
+                summary = {
+                    'activeUsers': int(float(vals[0].value or 0)),
+                    'totalUsers': int(float(vals[1].value or 0)),
+                    'sessions': int(float(vals[2].value or 0)),
+                    'screenPageViews': int(float(vals[3].value or 0)),
+                }
+            else:
+                summary = {'activeUsers': 0, 'totalUsers': 0, 'sessions': 0, 'screenPageViews': 0}
+
+            # Technologies: browsers and device categories (last 28 days)
+            tech_req = RunReportRequest(
+                property=prop,
+                date_ranges=[DateRange(start_date='28daysAgo', end_date='today')],
+                dimensions=[Dimension(name='browser'), Dimension(name='deviceCategory')],
+                metrics=[Metric(name='activeUsers')],
+                limit=50
+            )
+            tech_resp = client.run_report(request=tech_req)
+            tech = {'browsers': [], 'devices': []}
+            # Aggregate
+            for row in tech_resp.rows:
+                browser = row.dimension_values[0].value
+                device = row.dimension_values[1].value
+                users = int(float(row.metric_values[0].value or 0))
+                tech['browsers'].append({'browser': browser, 'users': users})
+                tech['devices'].append({'device': device, 'users': users})
+
+            # Country distribution
+            country_req = RunReportRequest(
+                property=prop,
+                date_ranges=[DateRange(start_date='28daysAgo', end_date='today')],
+                dimensions=[Dimension(name='country')],
+                metrics=[Metric(name='activeUsers')],
+                limit=50
+            )
+            country_resp = client.run_report(request=country_req)
+            countries = []
+            for row in country_resp.rows:
+                countries.append({'country': row.dimension_values[0].value, 'users': int(float(row.metric_values[0].value or 0))})
+
+            # Timeseries: pageviews over last 28 days
+            timeseries_req = RunReportRequest(
+                property=prop,
+                date_ranges=[DateRange(start_date='28daysAgo', end_date='today')],
+                dimensions=[Dimension(name='date')],
+                metrics=[Metric(name='screenPageViews')],
+                limit=365
+            )
+            timeseries_resp = client.run_report(request=timeseries_req)
+            timeseries = []
+            for row in timeseries_resp.rows:
+                date = row.dimension_values[0].value
+                views = int(float(row.metric_values[0].value or 0))
+                # GA returns date in YYYYMMDD, convert to YYYY-MM-DD
+                if len(date) == 8 and date.isdigit():
+                    date = f"{date[0:4]}-{date[4:6]}-{date[6:8]}"
+                timeseries.append({'date': date, 'views': views})
+
+            return Response({'summary': summary, 'technology': tech, 'countries': countries, 'timeseries': timeseries})
+
+        except Exception as e:
+            logger.exception('Failed to fetch GA reports')
+            return Response({'detail': f'Failed to fetch analytics: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class ActivationStatusView(APIView):
