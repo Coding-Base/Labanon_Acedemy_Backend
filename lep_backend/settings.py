@@ -325,6 +325,13 @@ if GA_SERVICE_ACCOUNT_FILE and not os.path.exists(GA_SERVICE_ACCOUNT_FILE):
     try:
         ga_hex = os.environ.get('GA_SERVICE_ACCOUNT_HEX')
         ga_b64 = os.environ.get('GA_SERVICE_ACCOUNT_JSON') or os.environ.get('GA_SERVICE_ACCOUNT_BASE64')
+        # Ensure parent directory exists before writing
+        parent = os.path.dirname(GA_SERVICE_ACCOUNT_FILE) or '/app'
+        try:
+            os.makedirs(parent, exist_ok=True)
+        except Exception:
+            pass
+
         if ga_hex:
             import binascii
             with open(GA_SERVICE_ACCOUNT_FILE, 'wb') as f:
