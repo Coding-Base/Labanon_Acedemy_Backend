@@ -233,6 +233,7 @@ class InitiatePaymentView(APIView):
                     'activation_type': request.data.get('activation_type'),
                     'exam_id': request.data.get('exam_id') or request.data.get('item_id'),
                     'subject_id': request.data.get('subject_id'),
+                    'activation_role': request.data.get('activation_role') or (request.data.get('activation') and request.data.get('activation').get('role')),
                 }
             else:
                 return Response({'detail': 'Invalid item_type'}, status=status.HTTP_400_BAD_REQUEST)
@@ -245,12 +246,20 @@ class InitiatePaymentView(APIView):
                 try:
                     exam_id = request.data.get('exam_id') or request.data.get('item_id')
                     subject_id = request.data.get('subject_id')
-                    if subject_id:
+                    activation_type = request.data.get('activation_type') or (request.data.get('activation') and request.data.get('activation').get('activation_type'))
+                    # Support account activation fees per role
+                    if activation_type == 'account':
+                        activation_role = request.data.get('activation_role') or (request.data.get('activation') and request.data.get('activation').get('role'))
+                        if activation_role:
+                            fee = ActivationFee.objects.filter(type=ActivationFee.TYPE_ACCOUNT, account_role=activation_role).order_by('-updated_at').first()
+                        else:
+                            fee = ActivationFee.objects.filter(type=ActivationFee.TYPE_ACCOUNT).order_by('-updated_at').first()
+                    elif subject_id:
                         fee = ActivationFee.objects.filter(type=ActivationFee.TYPE_INTERVIEW, subject_id=subject_id).order_by('-updated_at').first()
                     elif exam_id:
                         fee = ActivationFee.objects.filter(exam_identifier=str(exam_id)).order_by('-updated_at').first()
                     else:
-                        fee = ActivationFee.objects.filter(type='exam').order_by('-updated_at').first()
+                        fee = ActivationFee.objects.filter(type=ActivationFee.TYPE_EXAM).order_by('-updated_at').first()
                     if fee:
                         fee_currency = fee.currency
                 except Exception:
@@ -263,17 +272,24 @@ class InitiatePaymentView(APIView):
             # Determine currency: frontend > activation fee (if any) > default
             currency = (requested_currency or '').strip().upper() if requested_currency else None
             if kind == Payment.KIND_UNLOCK:
-                # Try to fetch configured activation fee currency when not provided
+                # Try to fetch configured activation fee when not provided (repeat block handles role/account)
                 fee_currency = None
                 try:
                     exam_id = request.data.get('exam_id') or request.data.get('item_id')
                     subject_id = request.data.get('subject_id')
-                    if subject_id:
+                    activation_type = request.data.get('activation_type') or (request.data.get('activation') and request.data.get('activation').get('activation_type'))
+                    if activation_type == 'account':
+                        activation_role = request.data.get('activation_role') or (request.data.get('activation') and request.data.get('activation').get('role'))
+                        if activation_role:
+                            fee = ActivationFee.objects.filter(type=ActivationFee.TYPE_ACCOUNT, account_role=activation_role).order_by('-updated_at').first()
+                        else:
+                            fee = ActivationFee.objects.filter(type=ActivationFee.TYPE_ACCOUNT).order_by('-updated_at').first()
+                    elif subject_id:
                         fee = ActivationFee.objects.filter(type=ActivationFee.TYPE_INTERVIEW, subject_id=subject_id).order_by('-updated_at').first()
                     elif exam_id:
                         fee = ActivationFee.objects.filter(exam_identifier=str(exam_id)).order_by('-updated_at').first()
                     else:
-                        fee = ActivationFee.objects.filter(type='exam').order_by('-updated_at').first()
+                        fee = ActivationFee.objects.filter(type=ActivationFee.TYPE_EXAM).order_by('-updated_at').first()
                     if fee:
                         fee_currency = fee.currency
                 except Exception:
@@ -537,6 +553,7 @@ class ActivationFeeView(APIView):
         fee_type = request.query_params.get('type', 'exam')
         exam = request.query_params.get('exam')
         subject = request.query_params.get('subject')
+        account_role = request.query_params.get('account_role')
 
         try:
             # Priority: subject-specific, exam-specific, then default global fee for type
@@ -545,7 +562,13 @@ class ActivationFeeView(APIView):
             elif exam:
                 fee = ActivationFee.objects.filter(exam_identifier=str(exam)).order_by('-updated_at').first()
             else:
-                fee = ActivationFee.objects.filter(type=fee_type).order_by('-updated_at').first()
+                if fee_type == ActivationFee.TYPE_ACCOUNT or fee_type == 'account':
+                    if account_role:
+                        fee = ActivationFee.objects.filter(type=ActivationFee.TYPE_ACCOUNT, account_role=account_role).order_by('-updated_at').first()
+                    else:
+                        fee = ActivationFee.objects.filter(type=ActivationFee.TYPE_ACCOUNT).order_by('-updated_at').first()
+                else:
+                    fee = ActivationFee.objects.filter(type=fee_type).order_by('-updated_at').first()
 
             if not fee:
                 return Response({'amount': None}, status=status.HTTP_200_OK)
@@ -600,6 +623,7 @@ class AdminActivationFeeView(APIView):
                 'type': f.type,
                 'exam_identifier': f.exam_identifier,
                 'subject_id': f.subject_id,
+                'account_role': f.account_role,
                 'currency': f.currency,
                 'amount': float(f.amount),
                 'updated_at': f.updated_at,
@@ -615,17 +639,26 @@ class AdminActivationFeeView(APIView):
             ftype = request.data.get('type') or ActivationFee.TYPE_EXAM
             exam_identifier = request.data.get('exam_identifier')
             subject_id = request.data.get('subject_id')
+            account_role = request.data.get('account_role')
             currency = request.data.get('currency') or 'NGN'
             amount = request.data.get('amount')
 
             if amount is None:
                 return Response({'detail': 'amount required'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # For account activation fees, require an explicit account_role (tutor or institution)
+            if (ftype == ActivationFee.TYPE_ACCOUNT or ftype == 'account'):
+                if not account_role:
+                    return Response({'detail': 'account_role required for account activation fees'}, status=status.HTTP_400_BAD_REQUEST)
+                if account_role not in (ActivationFee.ACCOUNT_ROLE_TUTOR, ActivationFee.ACCOUNT_ROLE_INSTITUTION):
+                    return Response({'detail': 'invalid account_role'}, status=status.HTTP_400_BAD_REQUEST)
 
             if fid:
                 fee = ActivationFee.objects.get(id=fid)
                 fee.type = ftype
                 fee.exam_identifier = exam_identifier
                 fee.subject_id = subject_id
+                fee.account_role = account_role
                 fee.currency = currency
                 fee.amount = Decimal(str(amount))
                 fee.updated_by = request.user
@@ -635,6 +668,7 @@ class AdminActivationFeeView(APIView):
                     type=ftype,
                     exam_identifier=exam_identifier,
                     subject_id=subject_id,
+                    account_role=account_role,
                     currency=currency,
                     amount=Decimal(str(amount)),
                     updated_by=request.user

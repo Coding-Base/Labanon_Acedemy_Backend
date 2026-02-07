@@ -524,14 +524,24 @@ class ActivationFee(models.Model):
     """
     TYPE_EXAM = 'exam'
     TYPE_INTERVIEW = 'interview'
+    TYPE_ACCOUNT = 'account'
     TYPE_CHOICES = [
         (TYPE_EXAM, 'Exam (global)'),
         (TYPE_INTERVIEW, 'Interview Subject'),
+        (TYPE_ACCOUNT, 'Account Activation'),
     ]
 
     type = models.CharField(max_length=20, choices=TYPE_CHOICES, default=TYPE_EXAM)
     exam_identifier = models.CharField(max_length=255, blank=True, null=True, help_text='Exam id or slug for which this fee applies')
     subject_id = models.IntegerField(blank=True, null=True, help_text='Subject id (for interview subjects)')
+    # For account activation fees, specify which role this fee applies to (tutor or institution)
+    ACCOUNT_ROLE_TUTOR = 'tutor'
+    ACCOUNT_ROLE_INSTITUTION = 'institution'
+    ACCOUNT_ROLE_CHOICES = [
+        (ACCOUNT_ROLE_TUTOR, 'Tutor'),
+        (ACCOUNT_ROLE_INSTITUTION, 'Institution'),
+    ]
+    account_role = models.CharField(max_length=32, choices=ACCOUNT_ROLE_CHOICES, blank=True, null=True, help_text='Role this account activation fee applies to')
     currency = models.CharField(max_length=8, default='NGN')
     amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='activation_fee_updates')
@@ -543,6 +553,8 @@ class ActivationFee(models.Model):
     def __str__(self):
         if self.type == self.TYPE_INTERVIEW and self.subject_id:
             return f"Interview Subject Fee {self.subject_id} - {self.currency} {self.amount}"
+        if self.type == self.TYPE_ACCOUNT and self.account_role:
+            return f"Account Activation Fee ({self.account_role}) - {self.currency} {self.amount}"
         if self.exam_identifier:
             return f"Exam Fee {self.exam_identifier} - {self.currency} {self.amount}"
         return f"Activation Fee {self.currency} {self.amount}"
