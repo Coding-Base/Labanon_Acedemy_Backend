@@ -4,7 +4,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.views import APIView
 from django.core.mail import send_mail
 from rest_framework.permissions import AllowAny
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.core.files.storage import default_storage
 from django.db import models
 from django.db.models import Sum, Count, Q
@@ -604,6 +604,60 @@ class SignatureView(APIView):
             return FileResponse(open(signature_path, 'rb'), content_type='image/png', as_attachment=False)
         else:
             return Response({'detail': 'Signature image not found'}, status=status.HTTP_404_NOT_FOUND)
+
+
+class AdminSignatureView(APIView):
+    """
+    GET: return JSON metadata for platform signature (signer_name, signature_url)
+    POST: upload multipart 'file' to overwrite backend/signature.png and/or update signer_name
+    """
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get(self, request):
+        meta_path = os.path.join(settings.BASE_DIR, 'signature_meta.json')
+        signer_name = None
+        if os.path.exists(meta_path):
+            try:
+                import json
+                with open(meta_path, 'r', encoding='utf-8') as f:
+                    meta = json.load(f)
+                    signer_name = meta.get('signer_name')
+            except Exception:
+                signer_name = None
+        return Response({'signer_name': signer_name, 'signature_url': request.build_absolute_uri('/api/signature/')})
+
+    def post(self, request):
+        # Only staff can modify platform signature
+        if not request.user or not request.user.is_staff:
+            return Response({'detail': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+
+        # Handle optional signer_name
+        signer_name = request.data.get('signer_name')
+
+        # Handle file upload
+        upload = request.FILES.get('file')
+        written = False
+        if upload:
+            try:
+                signature_path = os.path.join(settings.BASE_DIR, 'signature.png')
+                with open(signature_path, 'wb') as out:
+                    for chunk in upload.chunks():
+                        out.write(chunk)
+                written = True
+            except Exception as e:
+                return Response({'detail': f'Failed to write signature file: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # Save metadata
+        if signer_name is not None:
+            try:
+                import json
+                meta_path = os.path.join(settings.BASE_DIR, 'signature_meta.json')
+                with open(meta_path, 'w', encoding='utf-8') as f:
+                    json.dump({'signer_name': signer_name}, f)
+            except Exception as e:
+                return Response({'detail': f'Failed to write meta file: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return Response({'written': written, 'signer_name': signer_name})
 
 class LogoView(APIView):
     def get(self, request):

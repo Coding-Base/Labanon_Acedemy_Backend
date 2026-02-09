@@ -5,6 +5,7 @@ from .views import (
     LessonViewSet, PaymentViewSet, CartItemViewSet, DiplomaViewSet, 
     DiplomaEnrollmentViewSet, PortfolioViewSet, PortfolioGalleryItemViewSet,
     CertificateViewSet, SignatureView, LogoView, TutorApplicationView,
+    AdminSignatureView,
     LessonMediaUploadView, CourseImageUploadView, TutorsLeaderboardView,
     GospelVideoViewSet,
     ModuleQuizViewSet, QuizQuestionViewSet, QuizOptionViewSet, ModuleQuizAttemptViewSet
@@ -22,6 +23,7 @@ from .payment_views import (
 urlpatterns = [
     # Signature and logo endpoints for certificates
     path('signature/', SignatureView.as_view(), name='signature'),
+    path('admin/signature/', AdminSignatureView.as_view(), name='admin-signature'),
     path('logo/', LogoView.as_view(), name='logo'),
 
     # Paystack Payment endpoints
