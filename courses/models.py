@@ -205,6 +205,8 @@ class Payment(models.Model):
     # Gateway fees tracking
     gateway_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="Fee charged by payment gateway (Paystack/Flutterwave)")
     net_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="Amount received after gateway fee")
+    # Attribution: optional link to Visit that led to this payment
+    visit = models.ForeignKey('Visit', on_delete=models.SET_NULL, null=True, blank=True, related_name='payments')
 
     def __str__(self):
         return f"Payment {self.id} {self.user} {self.amount} {self.status}"
@@ -238,13 +240,37 @@ class Diploma(models.Model):
     meeting_place = models.CharField(max_length=255, help_text="Physical location of the program")
     published = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class Visit(models.Model):
+    """Simple visit/pageview model to capture referrer and UTM attributes."""
+    path = models.CharField(max_length=1024, blank=True)
+    full_url = models.CharField(max_length=2048, blank=True)
+    referrer = models.CharField(max_length=2048, blank=True, null=True)
+    utm_source = models.CharField(max_length=255, blank=True, null=True)
+    utm_medium = models.CharField(max_length=255, blank=True, null=True)
+    utm_campaign = models.CharField(max_length=255, blank=True, null=True)
+    utm_term = models.CharField(max_length=255, blank=True, null=True)
+    utm_content = models.CharField(max_length=255, blank=True, null=True)
+    user_agent = models.CharField(max_length=1024, blank=True, null=True)
+    ip_address = models.CharField(max_length=45, blank=True, null=True)
+    # Session and landing/exit
+    session_id = models.CharField(max_length=128, blank=True, null=True, db_index=True)
+    is_landing = models.BooleanField(default=False)
+    is_exit = models.BooleanField(default=False)
+
+    # Geo enrichment
+    country = models.CharField(max_length=128, blank=True, null=True, db_index=True)
+    region = models.CharField(max_length=128, blank=True, null=True)
+    city = models.CharField(max_length=128, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ['-created_at']
 
     def __str__(self):
-        return f"{self.title} ({self.institution.name})"
+        return f"Visit {self.path or self.full_url} @ {self.created_at.isoformat()}"
 
 
 class DiplomaEnrollment(models.Model):

@@ -25,6 +25,9 @@ from .models import (
     Payment, Course, Diploma, Enrollment, DiplomaEnrollment,
     PaystackSubAccount, FlutterwaveSubAccount, ActivationFee, ActivationUnlock
 )
+from .models import Visit
+from .serializers import VisitSerializer
+from django.db.models import Count
 from .models import PaymentSplitConfig
 from .paystack_utils import PaystackClient, naira_to_kobo, calculate_split, generate_payment_reference, PaystackError
 from .flutterwave_utils import FlutterwaveClient, FlutterwaveError, generate_payment_reference as generate_flutterwave_reference
@@ -37,6 +40,106 @@ except Exception:
     GA_CLIENT_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
+
+class TrackPageView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        data = request.data or {}
+        path = data.get('page_path') or data.get('path') or ''
+        full_url = data.get('full_url') or data.get('url') or ''
+        referrer = data.get('referrer') or ''
+        utm_source = data.get('utm_source') or ''
+        utm_medium = data.get('utm_medium') or ''
+        utm_campaign = data.get('utm_campaign') or ''
+        utm_term = data.get('utm_term') or ''
+        utm_content = data.get('utm_content') or ''
+        user_agent = request.META.get('HTTP_USER_AGENT', '')
+        ip = request.META.get('HTTP_X_FORWARDED_FOR', request.META.get('REMOTE_ADDR'))
+
+        session_id = data.get('session_id') or None
+        try:
+            visit = Visit.objects.create(
+                path=path[:1024], full_url=full_url[:2048], referrer=referrer[:2048],
+                utm_source=utm_source[:255], utm_medium=utm_medium[:255], utm_campaign=utm_campaign[:255],
+                utm_term=utm_term[:255], utm_content=utm_content[:255], user_agent=user_agent[:1024], ip_address=(ip or '')[:45],
+                session_id=session_id[:128] if session_id else None
+            )
+            # mark landing if no previous visit in this session
+            try:
+                if visit.session_id:
+                    prev = Visit.objects.filter(session_id=visit.session_id).exclude(id=visit.id).order_by('created_at').first()
+                    if not prev:
+                        visit.is_landing = True
+                        visit.save(update_fields=['is_landing'])
+                else:
+                    # heuristics: consider landing when referrer empty or external
+                    if not visit.referrer:
+                        visit.is_landing = True
+                        visit.save(update_fields=['is_landing'])
+            except Exception:
+                pass
+
+            # attempt geo enrichment if geoip2 is available and IP present
+            try:
+                if visit.ip_address:
+                    import geoip2.database
+                    dbpath = getattr(settings, 'GEOIP_DB_PATH', None)
+                    if dbpath:
+                        try:
+                            reader = geoip2.database.Reader(dbpath)
+                            rec = reader.city(visit.ip_address)
+                            visit.country = rec.country.name
+                            visit.region = rec.subdivisions.most_specific.name
+                            visit.city = rec.city.name
+                            visit.save(update_fields=['country','region','city'])
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+            return Response({'detail': 'ok', 'id': visit.id})
+        except Exception as e:
+            logger.exception('Failed to record visit')
+            return Response({'detail': 'error', 'error': str(e)}, status=500)
+
+
+class ReferrerStatsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not request.user.is_staff:
+            return Response({'detail': 'permission denied'}, status=403)
+
+        # Top UTM sources
+        start = request.query_params.get('start')
+        end = request.query_params.get('end')
+        qs = Visit.objects.all()
+        if start:
+            qs = qs.filter(created_at__gte=start)
+        if end:
+            qs = qs.filter(created_at__lte=end)
+
+        sources = list(qs.values('utm_source').annotate(count=Count('id')).order_by('-count')[:50])
+        referrers = list(qs.values('referrer').annotate(count=Count('id')).order_by('-count')[:200])
+
+        # Optionally return CSV when requested
+        fmt = request.query_params.get('format')
+        if fmt == 'csv':
+            import csv
+            from django.http import HttpResponse
+            response = HttpResponse(content_type='text/csv')
+            response['Content-Disposition'] = 'attachment; filename="referrers.csv"'
+            writer = csv.writer(response)
+            writer.writerow(['type', 'value', 'count'])
+            for s in sources:
+                writer.writerow(['utm_source', s.get('utm_source') or '(none)', s.get('count')])
+            for r in referrers:
+                writer.writerow(['referrer', r.get('referrer') or '(direct)', r.get('count')])
+            return response
+
+        return Response({'utm_sources': sources, 'referrers': referrers})
 
 # ==================== EMAIL HELPER FUNCTION ====================
 
@@ -352,6 +455,21 @@ class InitiatePaymentView(APIView):
                     payment_data['provider_reference'] = ''
 
             payment = Payment.objects.create(**payment_data)
+
+            # --- Attribution: attach Visit to Payment if visit_id provided ---
+            try:
+                visit_id = request.data.get('visit_id') or (request.data.get('visit') and request.data.get('visit').get('id'))
+                if visit_id:
+                    try:
+                        visit_obj = Visit.objects.filter(id=int(visit_id)).first()
+                        if visit_obj:
+                            payment.visit = visit_obj
+                            payment.save(update_fields=['visit'])
+                    except Exception:
+                        # don't block payment initiation on bad visit id
+                        logger.debug(f"Invalid visit_id provided for payment attribution: {visit_id}")
+            except Exception:
+                pass
 
             try:
                 client = PaystackClient()

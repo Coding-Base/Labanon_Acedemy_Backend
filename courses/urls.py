@@ -13,6 +13,7 @@ from .views import (
 from .payment_views import (
     InitiateUnlockView, PaystackWebhookView, InitiatePaymentView, 
     VerifyPaymentView, SubAccountViewSet, ActivationFeeView, ActivationStatusView, AdminActivationFeeView, AdminAnalyticsView,
+    TrackPageView, ReferrerStatsView,
     PaymentSplitConfigView,
     InitiateFlutterwavePaymentView, VerifyFlutterwavePaymentView, 
     FlutterwaveWebhookView, FlutterwaveSubAccountViewSet, 
@@ -35,6 +36,8 @@ urlpatterns = [
     path('payments/admin/activation-fees/<int:fee_id>/', AdminActivationFeeView.as_view(), name='admin-activation-fee-detail'),
     path('payments/admin/split-config/', PaymentSplitConfigView.as_view(), name='admin-split-config'),
     path('analytics/admin/summary/', AdminAnalyticsView.as_view(), name='admin-analytics-summary'),
+    path('analytics/track/', TrackPageView.as_view(), name='analytics-track'),
+    path('analytics/referrers/', ReferrerStatsView.as_view(), name='analytics-referrers'),
     path('payments/webhook/', PaystackWebhookView.as_view(), name='paystack-webhook'),
 
     # Flutterwave Payment endpoints

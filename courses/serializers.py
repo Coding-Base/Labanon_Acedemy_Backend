@@ -13,6 +13,7 @@ from .models import (
     PortfolioGalleryItem, Certificate, Review, GospelVideo,
     ModuleQuiz, QuizQuestion, QuizOption, ModuleQuizAttempt, QuizAnswer
 )
+from .models import Visit
 
 class InstitutionSerializer(serializers.ModelSerializer):
     owner_username = serializers.CharField(source='owner.username', read_only=True)
@@ -244,6 +245,22 @@ class CartItemSerializer(serializers.ModelSerializer):
             'course_id': {'write_only': True}
         }
 
+class VisitSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Visit
+        fields = [
+            'id', 'path', 'full_url', 'referrer', 'utm_source', 'utm_medium',
+            'utm_campaign', 'utm_term', 'utm_content', 'user_agent', 'ip_address', 'created_at'
+        ]
+        read_only_fields = ['id', 'created_at']
+
+
+class EventSerializer(serializers.Serializer):
+    event = serializers.CharField()
+    properties = serializers.DictField(child=serializers.CharField(), required=False)
+    page_path = serializers.CharField(required=False, allow_blank=True)
+    session_id = serializers.CharField(required=False, allow_blank=True)
+
 
 class DiplomaSerializer(serializers.ModelSerializer):
     institution_name = serializers.CharField(source='institution.name', read_only=True)
@@ -257,9 +274,9 @@ class DiplomaSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'institution', 'institution_name', 'creator', 'creator_username',
             'title', 'slug', 'description', 'image', 'image_upload', 'price', 'duration',
-            'start_date', 'end_date', 'meeting_place', 'published', 'created_at', 'updated_at'
+            'start_date', 'end_date', 'meeting_place', 'published', 'created_at'
         ]
-        read_only_fields = ['slug', 'created_at', 'updated_at']
+        read_only_fields = ['slug', 'created_at']
 
     def _normalize_path(self, raw: str) -> str:
         if not raw: return ''
