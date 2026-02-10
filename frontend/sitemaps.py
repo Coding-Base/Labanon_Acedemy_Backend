@@ -23,7 +23,7 @@ class FrontendSitemap(Sitemap):
             {'name': 'blog', 'priority': 0.8, 'changefreq': 'daily'},
             {'name': 'about', 'priority': 0.7, 'changefreq': 'monthly'},
             {'name': 'documentation', 'priority': 0.7, 'changefreq': 'weekly'},
-            {'name': 'tutor-application', 'priority': 0.8, 'changefreq': 'monthly'},
+            {'name': 'online-tutorial-for-student-application', 'priority': 0.8, 'changefreq': 'monthly'},
             {'name': 'login', 'priority': 0.6, 'changefreq': 'monthly'},
             {'name': 'register', 'priority': 0.6, 'changefreq': 'monthly'},
         ]

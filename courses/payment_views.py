@@ -141,6 +141,130 @@ class ReferrerStatsView(APIView):
 
         return Response({'utm_sources': sources, 'referrers': referrers})
 
+
+class DailyAnalyticsView(APIView):
+    """Return daily breakdown of visits, payments, and revenue."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from django.db.models import Count, Sum
+        from datetime import datetime, timedelta
+        import json
+
+        if not request.user.is_staff:
+            return Response({'detail': 'permission denied'}, status=403)
+
+        start = request.query_params.get('start')
+        end = request.query_params.get('end')
+        
+        # Default to last 30 days
+        if not end:
+            end_date = timezone.now()
+        else:
+            try:
+                end_date = datetime.fromisoformat(end)
+            except:
+                end_date = timezone.now()
+        
+        if not start:
+            start_date = end_date - timedelta(days=30)
+        else:
+            try:
+                start_date = datetime.fromisoformat(start)
+            except:
+                start_date = end_date - timedelta(days=30)
+
+        # Aggregate visits by date
+        daily_visits = Visit.objects.filter(
+            created_at__date__gte=start_date.date(),
+            created_at__date__lte=end_date.date()
+        ).extra(
+            select={'date': 'DATE(created_at)'}
+        ).values('date').annotate(
+            views=Count('id'),
+            landing_views=Count('id', filter=Q(is_landing=True))
+        ).order_by('date')
+
+        # Aggregate payments by date
+        daily_payments = Payment.objects.filter(
+            created_at__date__gte=start_date.date(),
+            created_at__date__lte=end_date.date(),
+            status=Payment.COMPLETE
+        ).extra(
+            select={'date': 'DATE(created_at)'}
+        ).values('date').annotate(
+            transactions=Count('id'),
+            revenue=Sum('amount'),
+            platform_fee=Sum('platform_fee'),
+            creator_amount=Sum('creator_amount')
+        ).order_by('date')
+
+        # Merge data by date
+        daily_data = {}
+        for visit in daily_visits:
+            date_str = str(visit['date'])
+            if date_str not in daily_data:
+                daily_data[date_str] = {}
+            daily_data[date_str].update({
+                'date': date_str,
+                'views': visit['views'],
+                'landing_views': visit['landing_views']
+            })
+
+        for payment in daily_payments:
+            date_str = str(payment['date'])
+            if date_str not in daily_data:
+                daily_data[date_str] = {'date': date_str}
+            daily_data[date_str].update({
+                'transactions': payment['transactions'],
+                'revenue': float(payment['revenue'] or 0),
+                'platform_fee': float(payment['platform_fee'] or 0),
+                'creator_amount': float(payment['creator_amount'] or 0)
+            })
+
+        # Sort and fill in missing metrics with 0
+        daily_list = sorted(daily_data.values(), key=lambda x: x['date'])
+        for item in daily_list:
+            item.setdefault('views', 0)
+            item.setdefault('landing_views', 0)
+            item.setdefault('transactions', 0)
+            item.setdefault('revenue', 0)
+            item.setdefault('platform_fee', 0)
+            item.setdefault('creator_amount', 0)
+
+        # Calculate totals
+        totals = {
+            'views': sum(d['views'] for d in daily_list),
+            'landing_views': sum(d['landing_views'] for d in daily_list),
+            'transactions': sum(d['transactions'] for d in daily_list),
+            'revenue': sum(d['revenue'] for d in daily_list),
+            'platform_fee': sum(d['platform_fee'] for d in daily_list),
+            'creator_amount': sum(d['creator_amount'] for d in daily_list)
+        }
+
+        # Optionally return CSV
+        fmt = request.query_params.get('format')
+        if fmt == 'csv':
+            import csv
+            from django.http import HttpResponse
+            response = HttpResponse(content_type='text/csv')
+            response['Content-Disposition'] = 'attachment; filename="daily_analytics.csv"'
+            writer = csv.writer(response)
+            writer.writerow(['Date', 'Page Views', 'Landing Views', 'Transactions', 'Revenue', 'Platform Fee', 'Creator Amount'])
+            for item in daily_list:
+                writer.writerow([
+                    item['date'],
+                    item['views'],
+                    item['landing_views'],
+                    item['transactions'],
+                    f"${item['revenue']:.2f}",
+                    f"${item['platform_fee']:.2f}",
+                    f"${item['creator_amount']:.2f}"
+                ])
+            return response
+
+        return Response({'daily': daily_list, 'totals': totals})
+
 # ==================== EMAIL HELPER FUNCTION ====================
 
 def send_successful_payment_emails(payment):

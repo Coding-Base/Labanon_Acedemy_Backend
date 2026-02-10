@@ -13,7 +13,7 @@ from .views import (
 from .payment_views import (
     InitiateUnlockView, PaystackWebhookView, InitiatePaymentView, 
     VerifyPaymentView, SubAccountViewSet, ActivationFeeView, ActivationStatusView, AdminActivationFeeView, AdminAnalyticsView,
-    TrackPageView, ReferrerStatsView,
+    TrackPageView, ReferrerStatsView, DailyAnalyticsView,
     PaymentSplitConfigView,
     InitiateFlutterwavePaymentView, VerifyFlutterwavePaymentView, 
     FlutterwaveWebhookView, FlutterwaveSubAccountViewSet, 
@@ -36,6 +36,7 @@ urlpatterns = [
     path('payments/admin/activation-fees/<int:fee_id>/', AdminActivationFeeView.as_view(), name='admin-activation-fee-detail'),
     path('payments/admin/split-config/', PaymentSplitConfigView.as_view(), name='admin-split-config'),
     path('analytics/admin/summary/', AdminAnalyticsView.as_view(), name='admin-analytics-summary'),
+    path('analytics/daily/', DailyAnalyticsView.as_view(), name='daily-analytics'),
     path('analytics/track/', TrackPageView.as_view(), name='analytics-track'),
     path('analytics/referrers/', ReferrerStatsView.as_view(), name='analytics-referrers'),
     path('payments/webhook/', PaystackWebhookView.as_view(), name='paystack-webhook'),
@@ -61,7 +62,7 @@ urlpatterns = [
     path('courses/upload-image/', CourseImageUploadView.as_view(), name='course-image-upload'),
 
     # Tutor Application
-    path('tutor-application/', TutorApplicationView.as_view(), name='tutor-application'),
+    path('online-tutorial-for-student-application/', TutorApplicationView.as_view(), name='online-tutorial-for-student-application'),
     
     # Leaderboard
     path('tutors/leaderboard/', TutorsLeaderboardView.as_view(), name='tutors-leaderboard'),
