@@ -1,6 +1,7 @@
 from django.contrib.sitemaps import Sitemap
 from django.urls import reverse
 from django.conf import settings
+from urllib.parse import urljoin
 
 
 class FrontendSitemap(Sitemap):
@@ -28,10 +29,8 @@ class FrontendSitemap(Sitemap):
         ]
 
     def location(self, item):
-        """Generate absolute URL for each item with the frontend domain"""
-        frontend_url = getattr(settings, 'FRONTEND_URL', 'https://lighthubacademy.org').rstrip('/')
-        path = f"/{item['name']}/" if item['name'] != 'home' else "/"
-        return f"{frontend_url}{path}"
+        """Generate relative URL path only; domain is added by get_urls()"""
+        return f"/{item['name']}/" if item['name'] != 'home' else "/"
 
     def lastmod(self, item):
         """Return the last modification date - not used for frontend static pages"""
@@ -44,3 +43,19 @@ class FrontendSitemap(Sitemap):
     def changefreq(self, item):
         """Return the change frequency for each item"""
         return item.get('changefreq', self.changefreq)
+
+    def get_urls(self, page=1, site=None, protocol=None):
+        """Override to use frontend domain instead of Django Sites framework"""
+        frontend_url = getattr(settings, 'FRONTEND_URL', 'https://lighthubacademy.org').rstrip('/')
+        urls = []
+        for item in self.paginator.page(page).object_list:
+            loc = urljoin(frontend_url + '/', self.location(item).lstrip('/'))
+            url_info = {
+                'item': item,
+                'location': loc,
+                'lastmod': self.lastmod(item),
+                'changefreq': self.changefreq(item),
+                'priority': self.priority(item),
+            }
+            urls.append(url_info)
+        return urls
