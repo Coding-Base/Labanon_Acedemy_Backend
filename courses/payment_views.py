@@ -189,7 +189,7 @@ class DailyAnalyticsView(APIView):
         daily_payments = Payment.objects.filter(
             created_at__date__gte=start_date.date(),
             created_at__date__lte=end_date.date(),
-            status=Payment.COMPLETE
+            status=Payment.SUCCESS
         ).extra(
             select={'date': 'DATE(created_at)'}
         ).values('date').annotate(
