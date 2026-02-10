@@ -1,5 +1,6 @@
 from django.contrib.sitemaps import Sitemap
 from django.urls import reverse
+from django.conf import settings
 
 
 class FrontendSitemap(Sitemap):
@@ -27,8 +28,10 @@ class FrontendSitemap(Sitemap):
         ]
 
     def location(self, item):
-        """Generate the URL for each item"""
-        return f"/{item['name']}/" if item['name'] != 'home' else "/"
+        """Generate absolute URL for each item with the frontend domain"""
+        frontend_url = getattr(settings, 'FRONTEND_URL', 'https://lighthubacademy.org').rstrip('/')
+        path = f"/{item['name']}/" if item['name'] != 'home' else "/"
+        return f"{frontend_url}{path}"
 
     def lastmod(self, item):
         """Return the last modification date - not used for frontend static pages"""
