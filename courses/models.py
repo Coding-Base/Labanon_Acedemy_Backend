@@ -17,6 +17,8 @@ class Institution(models.Model):
     signer_name = models.CharField(max_length=255, blank=True, null=True, help_text="Name of the person signing certificates (e.g. Dr. John Doe)")
     signer_position = models.CharField(max_length=255, blank=True, null=True, help_text="Job title (e.g. Dean of Studies, Registrar)")
     signature_image = models.CharField(max_length=512, blank=True, null=True, help_text="URL to the uploaded signature image")
+    # Institution logo to appear on certificates and public pages
+    logo_image = models.CharField(max_length=512, blank=True, null=True, help_text="URL to the uploaded institution logo")
     
     class Meta:
         ordering = ['-created_at']

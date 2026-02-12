@@ -18,17 +18,46 @@ from .models import Visit
 class InstitutionSerializer(serializers.ModelSerializer):
     owner_username = serializers.CharField(source='owner.username', read_only=True)
     courses_count = serializers.SerializerMethodField()
+    logo_image = serializers.SerializerMethodField()
+    signature_image = serializers.SerializerMethodField()
 
     class Meta:
         model = Institution
         fields = [
             'id', 'owner_username', 'name', 'description', 'is_active', 
-            'courses_count', 'created_at', 'signer_name', 'signer_position','signature_image'
+            'courses_count', 'created_at', 'signer_name', 'signer_position','signature_image', 'logo_image'
         ]
-        read_only_fields = ['id', 'owner_username', 'courses_count', 'created_at']
+        read_only_fields = [
+            'id', 'owner_username', 'courses_count', 'created_at'
+        ]
 
     def get_courses_count(self, obj):
         return obj.courses.count()
+
+    def _get_absolute_url(self, raw: str) -> str:
+        """Helper to convert relative media paths to absolute URLs"""
+        raw = (raw or '').strip()
+        if not raw:
+            return ''
+        if raw.startswith('http://') or raw.startswith('https://'):
+            return raw
+        media_prefix = getattr(settings, 'MEDIA_URL', '/media/').rstrip('/')
+        site = getattr(settings, 'SITE_URL', '').rstrip('/')
+        raw = re.sub(r'(^/+)', '/', raw)
+        if not raw.startswith(media_prefix):
+            raw = f"{media_prefix}/{raw.lstrip('/')}"
+        if site:
+            return f"{site}{raw}"
+        request = self.context.get('request')
+        if request is not None:
+            return request.build_absolute_uri(raw)
+        return raw
+
+    def get_logo_image(self, obj):
+        return self._get_absolute_url(obj.logo_image or '')
+
+    def get_signature_image(self, obj):
+        return self._get_absolute_url(obj.signature_image or '')
 
 
 class LessonSerializer(serializers.ModelSerializer):
@@ -384,18 +413,115 @@ class CertificateSerializer(serializers.ModelSerializer):
     course_title = serializers.CharField(source='course.title', read_only=True)
     username = serializers.CharField(source='user.username', read_only=True)
     user_id = serializers.IntegerField(source='user.id', read_only=True)
+    institution_signature = serializers.SerializerMethodField()
+    institution_logo = serializers.SerializerMethodField()
+    institution_signer_name = serializers.SerializerMethodField()
+    institution_signer_position = serializers.SerializerMethodField()
 
     class Meta:
         model = Certificate
         fields = [
             'id', 'user_id', 'username', 'course', 'course_title', 'certificate_id',
+            'institution_signature', 'institution_logo', 'institution_signer_name', 'institution_signer_position',
             'issue_date', 'completion_date', 'is_downloaded', 'download_count',
             'last_downloaded_at', 'created_at', 'updated_at'
         ]
         read_only_fields = [
-            'id', 'user_id', 'username', 'certificate_id', 'issue_date',
+            'id', 'user_id', 'username', 'certificate_id', 'institution_signature', 'institution_logo', 'institution_signer_name', 'institution_signer_position', 'issue_date',
             'download_count', 'last_downloaded_at', 'created_at', 'updated_at'
         ]
+
+    def _abs_url(self, raw: str):
+        raw = (raw or '').strip()
+        if not raw:
+            return ''
+        if raw.startswith('http://') or raw.startswith('https://'):
+            return raw
+        request = self.context.get('request')
+        if request is not None:
+            # ensure leading slash
+            if not raw.startswith('/'):
+                raw = '/' + raw
+            return request.build_absolute_uri(raw)
+        site = getattr(settings, 'SITE_URL', '').rstrip('/')
+        media_prefix = getattr(settings, 'MEDIA_URL', '/media/').rstrip('/')
+        if not raw.startswith(media_prefix):
+            raw = f"{media_prefix}/{raw.lstrip('/')}"
+        if site:
+            return f"{site}{raw}"
+        return raw
+
+    def get_institution_signature(self, obj):
+        inst = None
+        try:
+            inst = getattr(obj.course, 'institution', None)
+        except Exception:
+            inst = None
+        # Fallback: try to find an institution owned by the course creator (legacy cases)
+        if not inst:
+            try:
+                creator = getattr(obj.course, 'creator', None)
+                if creator:
+                    inst = Institution.objects.filter(owner=creator).first()
+            except Exception:
+                inst = None
+        if not inst:
+            return ''
+        return self._abs_url(getattr(inst, 'signature_image', '') or '')
+
+    def get_institution_logo(self, obj):
+        inst = None
+        try:
+            inst = getattr(obj.course, 'institution', None)
+        except Exception:
+            inst = None
+        # Fallback: try to find an institution owned by the course creator (legacy cases)
+        if not inst:
+            try:
+                creator = getattr(obj.course, 'creator', None)
+                if creator:
+                    inst = Institution.objects.filter(owner=creator).first()
+            except Exception:
+                inst = None
+        if not inst:
+            return ''
+        return self._abs_url(getattr(inst, 'logo_image', '') or '')
+
+    def get_institution_signer_name(self, obj):
+        inst = None
+        try:
+            inst = getattr(obj.course, 'institution', None)
+        except Exception:
+            inst = None
+        # Fallback: try to find an institution owned by the course creator (legacy cases)
+        if not inst:
+            try:
+                creator = getattr(obj.course, 'creator', None)
+                if creator:
+                    inst = Institution.objects.filter(owner=creator).first()
+            except Exception:
+                inst = None
+        if not inst:
+            return ''
+        return getattr(inst, 'signer_name', '') or ''
+
+    def get_institution_signer_position(self, obj):
+        inst = None
+        try:
+            inst = getattr(obj.course, 'institution', None)
+        except Exception:
+            inst = None
+        # Fallback: try to find an institution owned by the course creator (legacy cases)
+        if not inst:
+            try:
+                creator = getattr(obj.course, 'creator', None)
+                if creator:
+                    inst = Institution.objects.filter(owner=creator).first()
+            except Exception:
+                inst = None
+        if not inst:
+            return ''
+        return getattr(inst, 'signer_position', '') or ''
 
 
 class GospelVideoSerializer(serializers.ModelSerializer):
