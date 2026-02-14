@@ -64,7 +64,7 @@ class BlogSerializer(serializers.ModelSerializer):
     class Meta:
         model = Blog
         # include 'image_file' (write-only) so multipart uploads validate
-        fields = ['id', 'title', 'slug', 'content', 'image', 'image_file', 'excerpt', 'is_published', 'author', 'author_username', 
+        fields = ['id', 'title', 'slug', 'content', 'image', 'image_file', 'image_description', 'excerpt', 'is_published', 'author', 'author_username', 
                   'created_at', 'updated_at', 'published_at', 'likes_count', 'comments_count', 'shares_count', 
                   'user_liked', 'comments', 'meta_title', 'meta_description', 'meta_keywords']
         read_only_fields = ['slug', 'author', 'created_at', 'updated_at', 'likes_count', 'comments_count', 'shares_count']

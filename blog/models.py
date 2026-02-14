@@ -10,6 +10,7 @@ class Blog(models.Model):
     slug = models.SlugField(unique=True, max_length=255)
     content = models.TextField()
     image = models.CharField(max_length=512, blank=True)  # URL or file path
+    image_description = models.CharField(max_length=255, blank=True, help_text="Alt text and description for the featured image")
     excerpt = models.TextField(max_length=500, blank=True)
     # SEO / Metadata for search engines
     meta_title = models.CharField(max_length=255, blank=True)
