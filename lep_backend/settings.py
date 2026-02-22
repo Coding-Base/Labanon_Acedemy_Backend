@@ -36,6 +36,7 @@ INSTALLED_APPS = [
     'cbt',
     'videos',
     'blog',
+    'promos',
     'subadmin',
     'messaging',
 ]

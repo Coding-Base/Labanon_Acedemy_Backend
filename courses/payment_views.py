@@ -32,6 +32,7 @@ from .models import PaymentSplitConfig
 from .paystack_utils import PaystackClient, naira_to_kobo, calculate_split, generate_payment_reference, PaystackError
 from .flutterwave_utils import FlutterwaveClient, FlutterwaveError, generate_payment_reference as generate_flutterwave_reference
 from .serializers import PaymentSerializer
+from promos.models import PromoCode
 try:
     from google.analytics.data_v1beta import BetaAnalyticsDataClient
     from google.analytics.data_v1beta.types import DateRange, Metric, Dimension, RunReportRequest
@@ -567,6 +568,21 @@ class InitiatePaymentView(APIView):
                 'status': Payment.PENDING,
             }
 
+            # Accept optional promo code and discount from frontend
+            try:
+                promo_code = (request.data.get('promo_code') or '').strip() or None
+                promo_discount = request.data.get('promo_discount')
+                if promo_code:
+                    payment_data['promo_code'] = promo_code
+                if promo_discount is not None:
+                    try:
+                        payment_data['promo_discount'] = Decimal(str(promo_discount))
+                    except Exception:
+                        pass
+            except Exception:
+                # don't block payment initiation on promo parsing errors
+                pass
+
             if item_type == 'course':
                 payment_data['course'] = item
             elif item_type == 'diploma':
@@ -688,6 +704,21 @@ class VerifyPaymentView(APIView):
                             payment.net_amount = transaction_data.get('net', 0) / 100  # Convert from kobo to Naira
                             
                             payment.save()
+
+                            # Consume promo code atomically if present
+                            try:
+                                if getattr(payment, 'promo_code', None):
+                                    try:
+                                        promo = PromoCode.objects.select_for_update().get(code=payment.promo_code)
+                                        if promo.is_usable():
+                                            promo.consume()
+                                            logger.info(f"Promo {promo.code} consumed for Payment {payment.id}")
+                                        else:
+                                            logger.warning(f"Promo {promo.code} not usable when verifying Payment {payment.id}")
+                                    except PromoCode.DoesNotExist:
+                                        logger.warning(f"Promo code {payment.promo_code} not found for Payment {payment.id}")
+                            except Exception:
+                                logger.exception(f"Error consuming promo for Payment {payment.id}")
 
                             if payment.kind == Payment.KIND_COURSE and payment.course:
                                 Enrollment.objects.update_or_create(

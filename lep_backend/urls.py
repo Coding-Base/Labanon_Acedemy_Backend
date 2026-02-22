@@ -31,6 +31,7 @@ urlpatterns = [
     path('api/cbt/', include('cbt.urls')),
     path('api/videos/', include('videos.urls')),
     path('api/blog/', include('blog.urls')),
+    path('api/promos/', include('promos.urls')),
     path('api/subadmin/', include('subadmin.urls')),
     path('api/messages/', include('messaging.urls')),
     path('api/auth/', include('djoser.urls')),

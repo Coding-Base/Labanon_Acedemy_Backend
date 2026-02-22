@@ -209,6 +209,9 @@ class Payment(models.Model):
     net_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="Amount received after gateway fee")
     # Attribution: optional link to Visit that led to this payment
     visit = models.ForeignKey('Visit', on_delete=models.SET_NULL, null=True, blank=True, related_name='payments')
+    # Promo attribution (optional) - stores code used and discount amount applied
+    promo_code = models.CharField(max_length=64, blank=True, null=True, help_text='Promo code applied to this payment')
+    promo_discount = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text='Discount amount applied from promo')
 
     def __str__(self):
         return f"Payment {self.id} {self.user} {self.amount} {self.status}"
