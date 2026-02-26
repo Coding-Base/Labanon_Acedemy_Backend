@@ -200,7 +200,7 @@ class ReviewSerializer(serializers.ModelSerializer):
     class Meta:
         model = Review
         fields = ['id', 'author', 'name', 'role', 'rating', 'message', 'is_approved', 'category', 'cbt_exam', 'cbt_subject', 'cbt_score', 'created_at']
-        read_only_fields = ['is_approved', 'created_at']
+        read_only_fields = ['created_at']
 
     def get_author(self, obj):
         if obj.author:

@@ -316,7 +316,14 @@ class ReviewsPublicView(generics.ListCreateAPIView):
     permission_classes = [permissions.AllowAny]
 
     def get_queryset(self):
-        # Only show approved reviews publicly
+        # Show all reviews to admin users (accessed under /api/admin/ with admin token)
+        user = getattr(self.request, 'user', None)
+        try:
+            if user and user.is_authenticated and (getattr(user, 'is_staff', False) or getattr(user, 'role', None) == 'admin'):
+                return Review.objects.all().order_by('-created_at')
+        except Exception:
+            pass
+        # Otherwise only show approved reviews publicly
         return Review.objects.filter(is_approved=True).order_by('-created_at')
 
     def perform_create(self, serializer):
