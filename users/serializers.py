@@ -2,6 +2,7 @@ from rest_framework import serializers
 from django.core.validators import RegexValidator
 from django.conf import settings
 from .models import User
+from .models import TrialConfig, Review
 import uuid
 
 # Safe import for Djoser to prevent Pylance/Runtime errors if not installed
@@ -15,7 +16,8 @@ except ImportError:
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'role', 'institution_name', 'is_unlocked']
+        # include date_joined so frontend can determine trial window
+        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'role', 'institution_name', 'is_unlocked', 'date_joined']
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -183,3 +185,37 @@ class DjoserUserCreateSerializer(DjoserBaseUserCreateSerializer):
             pass
 
         return user
+
+
+# Serializer for TrialConfig
+class TrialConfigSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TrialConfig
+        fields = ['trial_days']
+
+
+class ReviewSerializer(serializers.ModelSerializer):
+    author = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = Review
+        fields = ['id', 'author', 'name', 'role', 'rating', 'message', 'is_approved', 'category', 'cbt_exam', 'cbt_subject', 'cbt_score', 'created_at']
+        read_only_fields = ['is_approved', 'created_at']
+
+    def get_author(self, obj):
+        if obj.author:
+            return {'id': obj.author.id, 'username': obj.author.username}
+        return None
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if user and user.is_authenticated:
+            validated_data['author'] = user
+            if not validated_data.get('name'):
+                validated_data['name'] = user.get_full_name() or user.username
+            if not validated_data.get('role'):
+                validated_data['role'] = getattr(user, 'role', 'student')
+        # By default, new reviews require admin approval
+        validated_data['is_approved'] = False
+        return super().create(validated_data)

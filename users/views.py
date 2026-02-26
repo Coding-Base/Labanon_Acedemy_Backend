@@ -13,10 +13,15 @@ from django.utils.encoding import force_bytes, force_str
 from django.contrib.auth import get_user_model
 
 from .models import User
+from .models import Review
 from .serializers import UserSerializer, RegisterSerializer
 from .permissions import IsMasterAdmin
 from courses.models import Course, Enrollment, Payment
 from cbt.models import ExamAttempt
+from .models import TrialConfig
+from .serializers import TrialConfigSerializer
+from .serializers import ReviewSerializer
+from rest_framework.permissions import IsAdminUser
 
 User = get_user_model()
 
@@ -276,3 +281,62 @@ class PasswordResetConfirmView(APIView):
             return Response({'message': 'Password reset successful. You can now login.'})
         
         return Response({'error': 'Invalid or expired token'}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class TrialDaysView(APIView):
+    """Admin-only endpoint for getting/updating the trial days setting."""
+    permission_classes = [IsMasterAdmin]
+
+    def get(self, request):
+        obj, _ = TrialConfig.objects.get_or_create(pk=1)
+        return Response({'trial_days': obj.trial_days})
+
+    def post(self, request):
+        days = request.data.get('trial_days')
+        try:
+            days = int(days)
+            if days <= 0:
+                raise ValueError()
+        except Exception:
+            return Response({'error': 'Invalid trial_days'}, status=status.HTTP_400_BAD_REQUEST)
+
+        obj, _ = TrialConfig.objects.get_or_create(pk=1)
+        obj.trial_days = days
+        obj.save()
+        return Response({'trial_days': obj.trial_days})
+
+    def put(self, request):
+        return self.post(request)
+
+
+class ReviewsPublicView(generics.ListCreateAPIView):
+    """Public endpoint to list approved reviews and allow creating new reviews."""
+    serializer_class = ReviewSerializer
+    pagination_class = StandardResultsSetPagination
+    permission_classes = [permissions.AllowAny]
+
+    def get_queryset(self):
+        # Only show approved reviews publicly
+        return Review.objects.filter(is_approved=True).order_by('-created_at')
+
+    def perform_create(self, serializer):
+        serializer.save()
+
+
+class ReviewDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """Detail view: public can GET only approved reviews; admin can manage any review."""
+    serializer_class = ReviewSerializer
+    queryset = Review.objects.all()
+
+    def get_permissions(self):
+        # Admin users may GET/PUT/DELETE; anonymous/public only GET approved
+        if self.request.method in permissions.SAFE_METHODS:
+            return [permissions.AllowAny()]
+        return [IsMasterAdmin()]
+
+    def retrieve(self, request, *args, **kwargs):
+        obj = self.get_object()
+        # If not approved and requester is not admin, return 404 to hide it
+        if not obj.is_approved and not (request.user and getattr(request.user, 'is_staff', False)):
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        return super().retrieve(request, *args, **kwargs)
