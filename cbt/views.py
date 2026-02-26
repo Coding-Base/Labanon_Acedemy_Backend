@@ -7,6 +7,7 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.conf import settings
 from django.db.models import Q
 from datetime import timedelta
 import random
@@ -626,12 +627,49 @@ class AnalyticsView(APIView):
             started_at__date=today
         ).count()
         
+        # Compute pass rate (default pass threshold 50%)
+        PASS_THRESHOLD = getattr(settings, 'CBT_PASS_THRESHOLD', 50)
+        passed_attempts = ExamAttempt.objects.filter(score__gte=PASS_THRESHOLD).count()
+        pass_rate = (passed_attempts / total_attempts) if total_attempts > 0 else 0
+
+        # Average time taken (seconds -> minutes)
+        avg_time_seconds = ExamAttempt.objects.aggregate(avg_time=Avg('time_taken_seconds'))['avg_time']
+        avg_time_minutes = (float(avg_time_seconds) / 60.0) if avg_time_seconds is not None else None
+
+        # Active students (unique users who attempted)
+        active_students = ExamAttempt.objects.values('user').distinct().count()
+
+        # Top scorers (top attempts by score)
+        top_attempts_qs = ExamAttempt.objects.filter(score__isnull=False).select_related('user', 'exam', 'subject').order_by('-score', '-submitted_at')[:10]
+        top_scorers = []
+        for a in top_attempts_qs:
+            top_scorers.append({
+                'id': a.id,
+                'user_id': a.user_id,
+                'name': getattr(a.user, 'username', None) or getattr(a.user, 'full_name', None) or str(a.user_id),
+                'exam': a.exam.title if a.exam else None,
+                'subject': a.subject.name if a.subject else None,
+                'score': float(a.score) if a.score is not None else None,
+                'date': a.submitted_at.isoformat() if a.submitted_at else (a.finished_at.isoformat() if a.finished_at else a.started_at.isoformat())
+            })
+
+        top_subject = None
+        if len(subjects_data) > 0:
+            top_subject = subjects_data[0]['name']
+
         return Response({
             'total_attempts': total_attempts,
             'total_exams': Exam.objects.count(),
             'average_score': float(avg_score),
             'today_attempts': today_attempts,
-            'subjects': list(subjects_data[:10])  # Top 10 subjects
+            'subjects': list(subjects_data[:10]),  # Top 10 subjects
+            'passed_attempts': passed_attempts,
+            'pass_rate': float(pass_rate),
+            'average_time_seconds': float(avg_time_seconds) if avg_time_seconds is not None else None,
+            'average_time_minutes': float(avg_time_minutes) if avg_time_minutes is not None else None,
+            'active_students_count': active_students,
+            'top_scorers': top_scorers,
+            'top_subject': top_subject,
         })
 
 class StudentLeaderboardView(APIView):
