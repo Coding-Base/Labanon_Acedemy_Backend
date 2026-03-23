@@ -266,6 +266,106 @@ class DailyAnalyticsView(APIView):
 
         return Response({'daily': daily_list, 'totals': totals})
 
+class RegistrationsView(APIView):
+    """Admin endpoint returning new registrations counts (daily, weekly, monthly) and optional timeseries."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not request.user.is_staff:
+            return Response({'detail': 'permission denied'}, status=403)
+
+        from django.contrib.auth import get_user_model
+        from django.db.models import Count
+        from datetime import datetime, timedelta
+
+        User = get_user_model()
+
+        start = request.query_params.get('start')
+        end = request.query_params.get('end')
+
+        if not end:
+            end_date = timezone.now()
+        else:
+            try:
+                end_date = datetime.fromisoformat(end)
+            except Exception:
+                end_date = timezone.now()
+
+        if not start:
+            start_date = end_date - timedelta(days=30)
+        else:
+            try:
+                start_date = datetime.fromisoformat(start)
+            except Exception:
+                start_date = end_date - timedelta(days=30)
+
+        # Totals
+        daily_count = User.objects.filter(date_joined__date=end_date.date()).count()
+        weekly_count = User.objects.filter(date_joined__gte=(end_date - timedelta(days=7))).count()
+        monthly_count = User.objects.filter(date_joined__gte=(end_date - timedelta(days=30))).count()
+
+        # Timeseries (per day) for the requested range
+        qs = User.objects.filter(date_joined__date__gte=start_date.date(), date_joined__date__lte=end_date.date())
+        series = qs.extra(select={'date': 'DATE(date_joined)'}).values('date').annotate(count=Count('id')).order_by('date')
+        timeseries = [{ 'date': str(s['date']), 'count': s['count'] } for s in series]
+
+        return Response({
+            'daily': daily_count,
+            'weekly': weekly_count,
+            'monthly': monthly_count,
+            'timeseries': timeseries
+        })
+
+
+class DownloadsAnalyticsView(APIView):
+    """Aggregate download-like visits from the Visit table. Matches common file extensions and /media/ paths."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not request.user.is_staff:
+            return Response({'detail': 'permission denied'}, status=403)
+
+        from django.db.models import Count
+        from datetime import datetime, timedelta
+
+        start = request.query_params.get('start')
+        end = request.query_params.get('end')
+
+        if not end:
+            end_date = timezone.now()
+        else:
+            try:
+                end_date = datetime.fromisoformat(end)
+            except Exception:
+                end_date = timezone.now()
+
+        if not start:
+            start_date = end_date - timedelta(days=30)
+        else:
+            try:
+                start_date = datetime.fromisoformat(start)
+            except Exception:
+                start_date = end_date - timedelta(days=30)
+
+        exts = ('.pdf', '.zip', '.doc', '.docx', '.ppt', '.pptx', '.xls', '.xlsx', '.csv', '.mp4', '.mp3')
+        qs = Visit.objects.filter(created_at__date__gte=start_date.date(), created_at__date__lte=end_date.date())
+
+        # Filter by path containing /media/ OR ending with a known extension
+        downloads_qs = qs.filter(models.Q(full_url__icontains='/media/') | models.Q(path__iendswith=exts[0])
+                                 | models.Q(path__iendswith=exts[1]) | models.Q(path__iendswith=exts[2])
+                                 | models.Q(path__iendswith=exts[3]) | models.Q(path__iendswith=exts[4])
+                                 | models.Q(path__iendswith=exts[5]) | models.Q(path__iendswith=exts[6])
+                                 | models.Q(path__iendswith=exts[7]) | models.Q(path__iendswith=exts[8])
+                                 | models.Q(path__iendswith=exts[9]) | models.Q(path__iendswith=exts[10]))
+
+        # Top downloaded paths
+        top = list(downloads_qs.values('full_url').annotate(count=Count('id')).order_by('-count')[:50])
+
+        # Daily timeseries
+        series = downloads_qs.extra(select={'date': 'DATE(created_at)'}).values('date').annotate(count=Count('id')).order_by('date')
+        timeseries = [{ 'date': str(s['date']), 'count': s['count'] } for s in series]
+
+        return Response({'total_downloads': downloads_qs.count(), 'top': top, 'timeseries': timeseries})
 # ==================== EMAIL HELPER FUNCTION ====================
 
 def send_successful_payment_emails(payment):

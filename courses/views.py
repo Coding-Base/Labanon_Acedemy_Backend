@@ -86,6 +86,38 @@ class CourseViewSet(viewsets.ModelViewSet):
             institution=institution 
         )
 
+    @action(detail=True, methods=['get'], permission_classes=[IsMasterAdmin])
+    def admin_detail(self, request, pk=None):
+        """Admin-facing detailed course view including sales and enrollment stats."""
+        try:
+            course = Course.objects.get(pk=pk)
+        except Course.DoesNotExist:
+            return Response({'detail': 'Course not found'}, status=404)
+
+        serializer = CourseSerializer(course, context={'request': request})
+
+        sold_count = Payment.objects.filter(course=course, status=Payment.SUCCESS).count()
+        payments_total = Payment.objects.filter(course=course, status=Payment.SUCCESS).aggregate(total=Sum('amount'))['total'] or 0
+        students_count = Enrollment.objects.filter(course=course, purchased=True).values('user').distinct().count()
+
+        data = serializer.data
+        data.update({
+            'sold_count': sold_count,
+            'payments_total': float(payments_total),
+            'students_count': students_count,
+        })
+        return Response(data)
+
+    @action(detail=True, methods=['post'], permission_classes=[IsMasterAdmin])
+    def unpublish(self, request, pk=None):
+        try:
+            course = Course.objects.get(pk=pk)
+        except Course.DoesNotExist:
+            return Response({'detail': 'Course not found'}, status=404)
+        course.published = False
+        course.save()
+        return Response({'detail': 'Course unpublished'})
+
 class ModuleViewSet(viewsets.ModelViewSet):
     queryset = Module.objects.all().order_by('order') # Added order_by
     serializer_class = ModuleSerializer
