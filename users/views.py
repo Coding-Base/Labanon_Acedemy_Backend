@@ -284,8 +284,13 @@ class PasswordResetConfirmView(APIView):
 
 
 class TrialDaysView(APIView):
-    """Admin-only endpoint for getting/updating the trial days setting."""
-    permission_classes = [IsMasterAdmin]
+    """Endpoint for getting trial days setting (public read) and updating it (admin-only)."""
+
+    def get_permissions(self):
+        """Allow public read access to trial config; restrict writes to admin."""
+        if self.request.method == 'GET':
+            return [permissions.AllowAny()]
+        return [IsMasterAdmin()]
 
     def get(self, request):
         obj, _ = TrialConfig.objects.get_or_create(pk=1)

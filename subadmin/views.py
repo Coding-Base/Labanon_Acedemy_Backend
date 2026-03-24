@@ -1,3 +1,5 @@
+import logging
+
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -86,9 +88,18 @@ class SubAdminViewSet(viewsets.ModelViewSet):
         # Prevent updating subadmins you didn't create
         if instance.created_by != request.user:
              return Response({'error': 'Unauthorized'}, status=status.HTTP_403_FORBIDDEN)
+        # Disallow changes to linked User fields or privilege flags via this endpoint
+        forbidden_user_fields = {'user', 'username', 'email', 'is_staff', 'is_superuser'}
+        if any(field in request.data for field in forbidden_user_fields):
+            return Response({'error': 'Modifying user or privilege fields is forbidden via this endpoint'}, status=status.HTTP_400_BAD_REQUEST)
+
+        logger = logging.getLogger(__name__)
+        changed_keys = list(request.data.keys())
 
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         serializer.is_valid(raise_exception=True)
         self.perform_update(serializer)
+
+        logger.info('SubAdmin(id=%s,user_id=%s) updated by user_id=%s changed_fields=%s', instance.id, instance.user_id, request.user.id, changed_keys)
 
         return Response(serializer.data)
