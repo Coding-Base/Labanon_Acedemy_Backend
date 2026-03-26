@@ -11,10 +11,11 @@ from django.contrib.auth.tokens import default_token_generator
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from django.utils.encoding import force_bytes, force_str
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 
 from .models import User
 from .models import Review
-from .serializers import UserSerializer, RegisterSerializer
+from .serializers import UserSerializer, RegisterSerializer, StudentDetailSerializer, TutorDetailSerializer, InstitutionDetailSerializer
 from .permissions import IsMasterAdmin
 from courses.models import Course, Enrollment, Payment
 from cbt.models import ExamAttempt
@@ -101,8 +102,8 @@ class StandardResultsSetPagination(PageNumberPagination):
     max_page_size = 100
 
 
-class UserAdminViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.DestroyModelMixin, viewsets.GenericViewSet):
-    """Admin user listing / detail / delete endpoints for master admin with search, filter and pagination."""
+class UserAdminViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.DestroyModelMixin, mixins.UpdateModelMixin, viewsets.GenericViewSet):
+    """Admin user listing / detail / delete/update endpoints for master admin with search, filter and pagination."""
     queryset = User.objects.all().order_by('-id')
     serializer_class = UserSerializer
     permission_classes = [IsMasterAdmin]
@@ -111,6 +112,98 @@ class UserAdminViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.
     filterset_fields = ['role']
     search_fields = ['username', 'email', 'first_name', 'last_name']
     ordering_fields = ['id', 'username', 'email']
+    
+    def get_serializer_class(self):
+        """Return appropriate serializer based on user role"""
+        role = self.request.query_params.get('role')
+        
+        if role == 'student':
+            return StudentDetailSerializer
+        elif role == 'tutor':
+            return TutorDetailSerializer
+        elif role == 'institution':
+            return InstitutionDetailSerializer
+        
+        return UserSerializer
+    
+    def partial_update(self, request, *args, **kwargs):
+        """Handle PATCH updates for admin-managed fields that may live on related models.
+        Frontend sends verification_status, custom_share_percentage, rejection_reason, verified_by for institutions
+        and verification_status/custom_share for tutors. Apply changes to related models accordingly.
+        """
+        user = self.get_object()
+        data = request.data or {}
+        print(f"[DEBUG] partial_update called for user {user.id} ({user.role}) with data: {data}")
+
+        # Institutions: apply fields to Institution model
+        if user.role == User.INSTITUTION or request.query_params.get('role') == 'institution':
+            try:
+                from courses.models import Institution
+                inst = Institution.objects.filter(owner=user).first()
+                if not inst:
+                    print(f"[DEBUG] No Institution found for user {user.id}")
+                    return Response({'detail': 'Institution profile not found for user.'}, status=400)
+
+                changed = False
+                if 'verification_status' in data:
+                    inst.verification_status = data.get('verification_status')
+                    if data.get('verification_status') == Institution.VERIFICATION_APPROVED:
+                        inst.verified_by = request.user
+                        inst.verified_at = timezone.now()
+                    print(f"[DEBUG] Updated verification_status to {inst.verification_status}")
+                    changed = True
+                if 'custom_share_percentage' in data:
+                    inst.custom_share_percentage = data.get('custom_share_percentage')
+                    print(f"[DEBUG] Updated custom_share_percentage to {inst.custom_share_percentage}")
+                    changed = True
+                if 'rejection_reason' in data:
+                    inst.rejection_reason = data.get('rejection_reason') or ''
+                    print(f"[DEBUG] Updated rejection_reason")
+                    changed = True
+                if changed:
+                    inst.save()
+                    print(f"[DEBUG] Institution saved successfully: {inst.id}")
+
+                # Return serialized user (read-only details reflect related institution fields via serializer methods)
+                serializer = self.get_serializer(user)
+                print(f"[DEBUG] Returning Institution user data")
+                return Response(serializer.data)
+            except Exception as e:
+                print(f"[ERROR] Exception in institution update: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                return Response({'detail': f'Error updating institution: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Tutors: try to update verification records if model exists
+        if user.role == User.TUTOR or request.query_params.get('role') == 'tutor':
+            try:
+                from courses.models import TutorVerificationDocument
+                if 'verification_status' in data:
+                    # create or update a verification document for record-keeping
+                    doc = TutorVerificationDocument.objects.filter(tutor=user).order_by('-reviewed_at').first()
+                    if not doc:
+                        doc = TutorVerificationDocument.objects.create(tutor=user, status=data.get('verification_status'))
+                    else:
+                        doc.status = data.get('verification_status')
+                    doc.reviewed_by = request.user
+                    doc.reviewed_at = timezone.now()
+                    if 'rejection_reason' in data:
+                        doc.rejection_reason = data.get('rejection_reason') or ''
+                    doc.save()
+                    print(f"[DEBUG] Tutor verification document saved")
+
+                serializer = self.get_serializer(user)
+                print(f"[DEBUG] Returning Tutor user data")
+                return Response(serializer.data)
+            except Exception as e:
+                print(f"[ERROR] Exception in tutor update: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                return Response({'detail': f'Error updating tutor: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Fallback to default behavior for other updates that map directly to User fields
+        print(f"[DEBUG] Using default behavior for User field updates")
+        return super().partial_update(request, *args, **kwargs)
 
 
 class ChangePasswordView(APIView):

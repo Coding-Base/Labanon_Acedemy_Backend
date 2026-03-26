@@ -8,7 +8,12 @@ from .views import PasswordResetRequestView, PasswordResetConfirmView
 from rest_framework.routers import DefaultRouter
 
 router = DefaultRouter()
-router.register(r'users', UserAdminViewSet, basename='admin-user')
+# Expose the admin UserAdminViewSet at the root of this include so that
+# mounting this urls module at `/api/users/` results in `/api/users/`
+# (instead of `/api/users/users/`). The same urls are also mounted at
+# `/api/admin/` for compatibility, so both `/api/users/` and
+# `/api/admin/` will return the user list as expected by the frontend.
+router.register(r'', UserAdminViewSet, basename='admin-user')
 
 urlpatterns = [
     path('register/', RegisterView.as_view(), name='register'),

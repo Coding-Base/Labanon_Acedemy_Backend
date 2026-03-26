@@ -7,6 +7,17 @@ from django.db.models import Avg, Sum
 import uuid
 
 class Institution(models.Model):
+    # Verification status choices
+    VERIFICATION_PENDING = 'pending'
+    VERIFICATION_APPROVED = 'approved'
+    VERIFICATION_REJECTED = 'rejected'
+    
+    VERIFICATION_CHOICES = [
+        (VERIFICATION_PENDING, 'Pending Verification'),
+        (VERIFICATION_APPROVED, 'Verified & Approved'),
+        (VERIFICATION_REJECTED, 'Verification Rejected'),
+    ]
+    
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='owned_institutions')
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
@@ -20,11 +31,52 @@ class Institution(models.Model):
     # Institution logo to appear on certificates and public pages
     logo_image = models.CharField(max_length=512, blank=True, null=True, help_text="URL to the uploaded institution logo")
     
+    # Verification system fields
+    verification_status = models.CharField(
+        max_length=20, 
+        choices=VERIFICATION_CHOICES, 
+        default=VERIFICATION_PENDING,
+        help_text="Verification status of the institution"
+    )
+    courses_published_before_verification = models.BooleanField(
+        default=False,
+        help_text="Whether courses can be seen in marketplace before verification"
+    )
+    
+    # Custom revenue share for this institution (overrides platform default)
+    custom_share_percentage = models.DecimalField(
+        max_digits=5, 
+        decimal_places=2, 
+        null=True, 
+        blank=True,
+        help_text="Custom share percentage for this institution (e.g., 85.00 for 85%). Overrides platform default."
+    )
+    
+    # Verification tracking
+    verified_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='verified_institutions',
+        help_text="Admin who verified this institution"
+    )
+    verified_at = models.DateTimeField(null=True, blank=True, help_text="When institution was verified")
+    rejection_reason = models.TextField(blank=True, help_text="Reason for rejection if status is rejected")
+    
+    # Contact information for verification
+    phone = models.CharField(max_length=20, blank=True, help_text="Institution contact phone number")
+    email = models.EmailField(blank=True, help_text="Institution contact email")
+    
     class Meta:
         ordering = ['-created_at']
 
     def __str__(self):
         return self.name
+    
+    def is_verified(self):
+        """Check if institution is verified."""
+        return self.verification_status == self.VERIFICATION_APPROVED
 
 
 class Course(models.Model):
@@ -630,3 +682,161 @@ class GospelVideo(models.Model):
     def get_active():
         """Get the currently active gospel video, or None."""
         return GospelVideo.objects.filter(is_active=True).order_by('-updated_at').first()
+
+
+class VerificationDocument(models.Model):
+    """Documents submitted by institutions for verification."""
+    
+    DOCUMENT_TYPE_CHOICES = [
+        ('business_registration', 'Business Registration Document'),
+        ('tax_id', 'Tax ID/Certificate'),
+        ('ownership_certificate', 'Ownership Certificate'),
+        ('accreditation', 'Accreditation Certificate'),
+        ('establishment_proof', 'Proof of Establishment'),
+        ('director_id', 'Director/Owner ID'),
+        ('address_proof', 'Address Proof'),
+        ('other', 'Other Document'),
+    ]
+    
+    STATUS_PENDING = 'pending'
+    STATUS_APPROVED = 'approved'
+    STATUS_REJECTED = 'rejected'
+    
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending Review'),
+        (STATUS_APPROVED, 'Approved'),
+        (STATUS_REJECTED, 'Rejected'),
+    ]
+    
+    institution = models.ForeignKey(
+        Institution,
+        on_delete=models.CASCADE,
+        related_name='verification_documents'
+    )
+    document_type = models.CharField(max_length=50, choices=DOCUMENT_TYPE_CHOICES)
+    document_file = models.CharField(
+        max_length=512,
+        help_text="URL to uploaded document (PDF, image, etc.)"
+    )
+    document_name = models.CharField(max_length=255, help_text="Original filename")
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_PENDING
+    )
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reviewed_documents'
+    )
+    review_notes = models.TextField(blank=True, help_text="Admin notes on the document")
+    
+    class Meta:
+        ordering = ['-submitted_at']
+        verbose_name = 'Verification Document'
+        verbose_name_plural = 'Verification Documents'
+    
+    def __str__(self):
+        return f"{self.institution.name} - {self.get_document_type_display()}"
+
+
+class TutorVerificationDocument(models.Model):
+    """Documents submitted by tutors for verification."""
+    
+    DOCUMENT_TYPE_CHOICES = [
+        ('id_card', 'National ID / Passport'),
+        ('qualification', 'Educational Qualification'),
+        ('teaching_certificate', 'Teaching Certificate'),
+        ('experience_proof', 'Experience Reference'),
+        ('address_proof', 'Address Proof'),
+        ('other', 'Other Document'),
+    ]
+    
+    STATUS_PENDING = 'pending'
+    STATUS_APPROVED = 'approved'
+    STATUS_REJECTED = 'rejected'
+    
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending Review'),
+        (STATUS_APPROVED, 'Approved'),
+        (STATUS_REJECTED, 'Rejected'),
+    ]
+    
+    tutor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='verification_documents'
+    )
+    document_type = models.CharField(max_length=50, choices=DOCUMENT_TYPE_CHOICES)
+    document_file = models.CharField(
+        max_length=512,
+        help_text="URL to uploaded document (PDF, image, etc.)"
+    )
+    document_name = models.CharField(max_length=255, help_text="Original filename")
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_PENDING
+    )
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reviewed_tutor_documents'
+    )
+    review_notes = models.TextField(blank=True, help_text="Admin notes on the document")
+    
+    class Meta:
+        ordering = ['-submitted_at']
+        verbose_name = 'Tutor Verification Document'
+        verbose_name_plural = 'Tutor Verification Documents'
+    
+    def __str__(self):
+        return f"{self.tutor.username} - {self.get_document_type_display()}"
+
+
+class LegalDocument(models.Model):
+    """Legal/agreement documents that can be downloaded by institutions and tutors."""
+    
+    DOCUMENT_TYPE_CHOICES = [
+        ('terms_of_service', 'Terms of Service'),
+        ('creator_agreement', 'Creator Agreement'),
+        ('data_privacy', 'Data Privacy Policy'),
+        ('intellectual_property', 'Intellectual Property Agreement'),
+        ('payment_terms', 'Payment Terms & Conditions'),
+        ('code_of_conduct', 'Code of Conduct'),
+        ('other', 'Other'),
+    ]
+    
+    document_type = models.CharField(max_length=50, choices=DOCUMENT_TYPE_CHOICES, unique=True)
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    document_file = models.CharField(
+        max_length=512,
+        help_text="URL to the PDF/document file"
+    )
+    version = models.CharField(max_length=20, default='1.0')
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True
+    )
+    
+    class Meta:
+        ordering = ['-updated_at']
+        verbose_name = 'Legal Document'
+        verbose_name_plural = 'Legal Documents'
+    
+    def __str__(self):
+        return f"{self.title} (v{self.version})"

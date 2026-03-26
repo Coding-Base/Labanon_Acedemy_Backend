@@ -8,7 +8,8 @@ from .views import (
     AdminSignatureView,
     LessonMediaUploadView, CourseImageUploadView, TutorsLeaderboardView,
     GospelVideoViewSet,
-    ModuleQuizViewSet, QuizQuestionViewSet, QuizOptionViewSet, ModuleQuizAttemptViewSet
+    ModuleQuizViewSet, QuizQuestionViewSet, QuizOptionViewSet, ModuleQuizAttemptViewSet,
+    LegalDocumentViewSet
 )
 from .payment_views import (
     InitiateUnlockView, PaystackWebhookView, InitiatePaymentView, 
@@ -19,6 +20,12 @@ from .payment_views import (
     InitiateFlutterwavePaymentView, VerifyFlutterwavePaymentView, 
     FlutterwaveWebhookView, FlutterwaveSubAccountViewSet, 
     FlutterwaveListBanksView, FlutterwaveVerifyAccountView, PaymentReconciliationView
+)
+from .verification_views import (
+    InstitutionComplianceFormView, AdminComplianceDashboardView,
+    ApproveInstitutionVerificationView, RejectInstitutionVerificationView,
+    LegalDocumentListView, AdminLegalDocumentView,
+    TutorComplianceFormView
 )
 
 # Custom payment endpoints MUST be defined before router to take precedence
@@ -69,6 +76,27 @@ urlpatterns = [
     
     # Leaderboard
     path('tutors/leaderboard/', TutorsLeaderboardView.as_view(), name='tutors-leaderboard'),
+    
+    # ==================== VERIFICATION & COMPLIANCE ====================
+    
+    # Institution verification (institution dashboard)
+    path('institutions/compliance/form/', InstitutionComplianceFormView.as_view(), name='institution-compliance-form'),
+    
+    # Tutor verification (tutor dashboard)
+    path('tutors/compliance/form/', TutorComplianceFormView.as_view(), name='tutor-compliance-form'),
+    
+    # Admin compliance dashboard
+    path('admin/compliance/dashboard/', AdminComplianceDashboardView.as_view(), name='admin-compliance-dashboard'),
+    
+    # Admin verification actions
+    path('admin/institutions/verify/approve/', ApproveInstitutionVerificationView.as_view(), name='approve-institution-verification'),
+    path('admin/institutions/verify/reject/', RejectInstitutionVerificationView.as_view(), name='reject-institution-verification'),
+    
+    # Legal documents (public)
+    path('legal-documents/', LegalDocumentListView.as_view(), name='legal-documents-list'),
+    
+    # Legal documents (admin)
+    path('admin/legal-documents/', AdminLegalDocumentView.as_view(), name='admin-legal-documents'),
 ]
 
 router = DefaultRouter()
@@ -91,5 +119,6 @@ router.register(r'module-quizzes', ModuleQuizViewSet, basename='module-quiz')
 router.register(r'quiz-questions', QuizQuestionViewSet, basename='quiz-question')
 router.register(r'quiz-options', QuizOptionViewSet, basename='quiz-option')
 router.register(r'quiz-attempts', ModuleQuizAttemptViewSet, basename='quiz-attempt')
+router.register(r'legal-documents', LegalDocumentViewSet, basename='legal-document')
 
 urlpatterns += router.urls

@@ -11,7 +11,8 @@ from .models import (
     Institution, Course, Module, Lesson, Enrollment, Payment, 
     CartItem, Diploma, DiplomaEnrollment, Portfolio, 
     PortfolioGalleryItem, Certificate, Review, GospelVideo,
-    ModuleQuiz, QuizQuestion, QuizOption, ModuleQuizAttempt, QuizAnswer
+    ModuleQuiz, QuizQuestion, QuizOption, ModuleQuizAttempt, QuizAnswer,
+    VerificationDocument, TutorVerificationDocument, LegalDocument
 )
 from .models import Visit
 
@@ -645,4 +646,74 @@ class ModuleQuizAttemptSerializer(serializers.ModelSerializer):
         read_only_fields = [
             'id', 'user', 'started_at', 'submitted_at', 'score', 
             'total_points', 'earned_points', 'passed'
+        ]
+
+
+# ==================== VERIFICATION SERIALIZERS ====================
+
+class VerificationDocumentSerializer(serializers.ModelSerializer):
+    """Serializer for institution verification documents."""
+    reviewed_by_username = serializers.CharField(source='reviewed_by.username', read_only=True)
+    
+    class Meta:
+        model = VerificationDocument
+        fields = [
+            'id', 'institution', 'document_type', 'document_file', 'document_name',
+            'status', 'submitted_at', 'reviewed_at', 'reviewed_by_username', 'review_notes'
+        ]
+        read_only_fields = [
+            'id', 'submitted_at', 'reviewed_at', 'reviewed_by_username'
+        ]
+
+
+class TutorVerificationDocumentSerializer(serializers.ModelSerializer):
+    """Serializer for tutor verification documents."""
+    reviewed_by_username = serializers.CharField(source='reviewed_by.username', read_only=True)
+    tutor_username = serializers.CharField(source='tutor.username', read_only=True)
+    tutor_email = serializers.CharField(source='tutor.email', read_only=True)
+    
+    class Meta:
+        model = TutorVerificationDocument
+        fields = [
+            'id', 'tutor', 'tutor_username', 'tutor_email', 'document_type', 
+            'document_file', 'document_name', 'status', 'submitted_at', 
+            'reviewed_at', 'reviewed_by_username', 'review_notes'
+        ]
+        read_only_fields = [
+            'id', 'submitted_at', 'reviewed_at', 'reviewed_by_username'
+        ]
+
+
+class LegalDocumentSerializer(serializers.ModelSerializer):
+    """Serializer for legal documents."""
+    updated_by_username = serializers.CharField(source='updated_by.username', read_only=True)
+    
+    class Meta:
+        model = LegalDocument
+        fields = [
+            'id', 'document_type', 'title', 'description', 'document_file',
+            'version', 'is_active', 'created_at', 'updated_at', 'updated_by_username'
+        ]
+        read_only_fields = [
+            'id', 'created_at', 'updated_at', 'updated_by_username'
+        ]
+
+
+class InstitutionVerificationSerializer(serializers.ModelSerializer):
+    """Extended Institution serializer with verification details."""
+    verification_documents = VerificationDocumentSerializer(many=True, read_only=True)
+    verified_by_username = serializers.CharField(source='verified_by.username', read_only=True)
+    owner_email = serializers.CharField(source='owner.email', read_only=True)
+    owner_phone = serializers.CharField(source='owner.phone', read_only=True, allow_null=True)
+    
+    class Meta:
+        model = Institution
+        fields = [
+            'id', 'name', 'description', 'email', 'phone', 'owner_email', 'owner_phone',
+            'verification_status', 'verified_by_username', 'verified_at', 'rejection_reason',
+            'custom_share_percentage', 'courses_published_before_verification',
+            'verification_documents', 'is_active', 'created_at'
+        ]
+        read_only_fields = [
+            'id', 'verified_by_username', 'verified_at', 'created_at', 'verification_documents'
         ]

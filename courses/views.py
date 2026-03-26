@@ -23,7 +23,8 @@ from .models import (
     Institution, Course, Module, Lesson, Enrollment, CartItem, 
     Diploma, DiplomaEnrollment, Portfolio, PortfolioGalleryItem, 
     Certificate, Payment, GospelVideo,
-    ModuleQuiz, QuizQuestion, QuizOption, ModuleQuizAttempt, QuizAnswer
+    ModuleQuiz, QuizQuestion, QuizOption, ModuleQuizAttempt, QuizAnswer,
+    LegalDocument
 )
 from .serializers import (
     InstitutionSerializer, CourseSerializer, ModuleSerializer, 
@@ -32,7 +33,8 @@ from .serializers import (
     PortfolioGalleryItemSerializer, CertificateSerializer, PaymentSerializer,
     GospelVideoSerializer,
     ModuleQuizSerializer, QuizQuestionSerializer, QuizOptionSerializer,
-    ModuleQuizAttemptSerializer, ModuleQuizAttemptSubmitSerializer
+    ModuleQuizAttemptSerializer, ModuleQuizAttemptSubmitSerializer,
+    LegalDocumentSerializer
 )
 from .permissions import IsCreatorOrTeacherOrAdmin
 from rest_framework.decorators import action
@@ -1060,3 +1062,172 @@ class ModuleQuizAttemptViewSet(viewsets.ReadOnlyModelViewSet):
         if not self.request.user.is_staff:
             return ModuleQuizAttempt.objects.filter(user=self.request.user)
         return ModuleQuizAttempt.objects.all()
+
+
+class LegalDocumentViewSet(viewsets.ModelViewSet):
+    """
+    API ViewSet for managing legal/agreement documents.
+    
+    - Master admins can create, update, and delete documents
+    - All authenticated users can view and download active documents
+    - Document types: terms_of_service, creator_agreement, data_privacy, 
+      intellectual_property, payment_terms, code_of_conduct, other
+    - Supports versioning and activation/deactivation of document versions
+    """
+    queryset = LegalDocument.objects.filter(is_active=True).order_by('-updated_at')
+    serializer_class = LegalDocumentSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter, DjangoFilterBackend]
+    search_fields = ['title', 'description', 'document_type']
+    filterset_fields = ['document_type', 'is_active']
+    ordering_fields = ['created_at', 'updated_at', 'title']
+    ordering = ['-updated_at']
+    
+    def get_permissions(self):
+        """
+        Permission strategy:
+        - create/update/destroy: Only MasterAdmin
+        - list/retrieve/download: All authenticated users
+        """
+        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+            return [IsMasterAdmin()]
+        return [permissions.IsAuthenticated()]
+    
+    def get_queryset(self):
+        """
+        Get documents based on user role.
+        
+        - Master admins: see all documents (active and inactive)
+        - Regular users: see only active documents
+        """
+        if IsMasterAdmin().has_permission(self.request, self):
+            return LegalDocument.objects.all().order_by('-updated_at')
+        return LegalDocument.objects.filter(is_active=True).order_by('-updated_at')
+    
+    def perform_create(self, serializer):
+        """Set the updated_by field to the current user when creating."""
+        serializer.save(updated_by=self.request.user)
+    
+    def perform_update(self, serializer):
+        """Set the updated_by field to the current user when updating."""
+        serializer.save(updated_by=self.request.user)
+    
+    @action(detail=True, methods=['get'], permission_classes=[permissions.IsAuthenticated])
+    def download(self, request, pk=None):
+        """
+        Download the document file.
+        
+        Returns the document file with proper headers for download.
+        The user will be prompted to save the file to their device.
+        """
+        document = self.get_object()
+        
+        if not document.document_file:
+            return Response(
+                {'detail': 'Document file not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        try:
+            # If the document_file is a URL, redirect to it
+            if document.document_file.startswith('http'):
+                return Response(
+                    {'url': document.document_file},
+                    status=status.HTTP_200_OK
+                )
+            
+            # Try to serve the file from storage
+            if hasattr(document.document_file, 'open'):
+                file_response = FileResponse(
+                    document.document_file.open('rb'),
+                    content_type='application/octet-stream'
+                )
+                filename = document.document_file.name.split('/')[-1] or f"{document.title}.pdf"
+                file_response['Content-Disposition'] = f'attachment; filename="{filename}"'
+                return file_response
+            
+            # If it's a path, try to open it
+            from django.conf import settings
+            file_path = str(document.document_file)
+            if not file_path.startswith('/'):
+                file_path = f"{settings.MEDIA_ROOT}/{file_path}"
+            
+            with open(file_path, 'rb') as f:
+                file_response = FileResponse(
+                    f,
+                    content_type='application/octet-stream'
+                )
+                filename = document.title.replace(' ', '_')
+                file_response['Content-Disposition'] = f'attachment; filename="{filename}.pdf"'
+                return file_response
+                
+        except FileNotFoundError:
+            return Response(
+                {'detail': 'Document file not accessible'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {'detail': f'Error downloading document: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
+    def by_type(self, request):
+        """
+        Get all documents grouped by type.
+        
+        Returns documents organized by their document_type for easy categorization.
+        """
+        document_type = request.query_params.get('type')
+        
+        if document_type:
+            documents = self.get_queryset().filter(document_type=document_type)
+        else:
+            documents = self.get_queryset()
+        
+        serializer = self.get_serializer(documents, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=['post'], permission_classes=[IsMasterAdmin])
+    def set_active(self, request, pk=None):
+        """
+        Activate or deactivate a document version.
+        
+        Only one version per document_type should be active at a time.
+        When activating a new version, previous versions are automatically deactivated.
+        """
+        document = self.get_object()
+        
+        # When setting this document as active, deactivate others with same type
+        if not document.is_active:
+            LegalDocument.objects.filter(
+                document_type=document.document_type,
+                is_active=True
+            ).exclude(id=document.id).update(is_active=False)
+        
+        document.is_active = True
+        document.save()
+        
+        serializer = self.get_serializer(document)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
+    def latest(self, request):
+        """
+        Get the latest version of each document type.
+        
+        Useful for fetching the current active agreements without needing to know all versions.
+        """
+        from django.db.models import Max
+        
+        latest_ids = LegalDocument.objects.filter(
+            is_active=True
+        ).values('document_type').annotate(
+            max_id=Max('id')
+        ).values_list('max_id', flat=True)
+        
+        documents = self.get_queryset().filter(id__in=latest_ids)
+        serializer = self.get_serializer(documents, many=True)
+        return Response(serializer.data)

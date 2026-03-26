@@ -1,6 +1,8 @@
 from rest_framework import serializers
 from django.core.validators import RegexValidator
 from django.conf import settings
+from django.db import models
+from django.db.models import Sum, Avg
 from .models import User
 from .models import TrialConfig, Review
 import uuid
@@ -219,3 +221,171 @@ class ReviewSerializer(serializers.ModelSerializer):
         # By default, new reviews require admin approval
         validated_data['is_approved'] = False
         return super().create(validated_data)
+
+
+# Specialized serializers for detailed user information needed by management dashboards
+
+class StudentDetailSerializer(serializers.ModelSerializer):
+    """Detailed student information including enrollment and spending data"""
+    # `phone` may not be a direct field on the custom User model in all deployments;
+    # expose it via a SerializerMethodField to avoid DRF trying to map a non-existent
+    # model field (which raises ImproperlyConfigured).
+    phone = serializers.SerializerMethodField()
+    courses_enrolled = serializers.SerializerMethodField()
+    total_spending = serializers.SerializerMethodField()
+    certificates_earned = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ['id', 'first_name', 'last_name', 'email', 'phone', 'username', 'date_joined', 
+                  'is_active', 'last_login', 'courses_enrolled', 'total_spending', 'certificates_earned']
+
+    def get_courses_enrolled(self, obj):
+        """Count successful course enrollments"""
+        from courses.models import Enrollment
+        return Enrollment.objects.filter(user=obj, purchased=True).count()
+
+    def get_total_spending(self, obj):
+        """Sum all successful payments for this student"""
+        from courses.models import Payment
+        total = Payment.objects.filter(
+            user=obj,
+            status=Payment.SUCCESS
+        ).aggregate(Sum('amount'))['amount__sum'] or 0
+        return float(total)
+
+    def get_certificates_earned(self, obj):
+        """Count certificates earned by student"""
+        from courses.models import Certificate
+        return Certificate.objects.filter(user=obj).count()
+
+    def get_phone(self, obj):
+        # Prefer a direct attribute if present, otherwise attempt common fallbacks
+        return getattr(obj, 'phone', None)
+
+
+class TutorDetailSerializer(serializers.ModelSerializer):
+    """Detailed tutor information including courses, ratings, and verification status"""
+    phone = serializers.SerializerMethodField()
+    verification_status = serializers.SerializerMethodField()
+    courses_count = serializers.SerializerMethodField()
+    students_taught = serializers.SerializerMethodField()
+    total_revenue = serializers.SerializerMethodField()
+    average_rating = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ['id', 'first_name', 'last_name', 'email', 'phone', 'username', 'date_joined',
+                  'is_active', 'verification_status', 'courses_count', 'students_taught', 
+                  'total_revenue', 'average_rating']
+
+    def get_verification_status(self, obj):
+        """Get tutor verification status from TutorVerificationDocument"""
+        from courses.models import TutorVerificationDocument
+        doc = TutorVerificationDocument.objects.filter(tutor=obj).order_by('-reviewed_at').first()
+        return doc.status if doc else 'pending'
+
+    def get_courses_count(self, obj):
+        """Count courses created by tutor"""
+        from courses.models import Course
+        return Course.objects.filter(creator=obj).count()
+
+    def get_students_taught(self, obj):
+        """Count unique students enrolled in tutor's courses"""
+        from courses.models import Enrollment, Course
+        return Enrollment.objects.filter(
+            course__creator=obj,
+            purchased=True
+        ).values('user').distinct().count()
+
+    def get_total_revenue(self, obj):
+        """Sum all course sales revenue for tutor"""
+        from courses.models import Payment, Course
+        total = Payment.objects.filter(
+            course__creator=obj,
+            status=Payment.SUCCESS
+        ).aggregate(Sum('amount'))['amount__sum'] or 0
+        return float(total)
+
+    def get_average_rating(self, obj):
+        """Calculate average rating from course reviews"""
+        # Reviews store the actual rating values; aggregate directly from Review
+        from courses.models import Review
+        from django.db.models import Avg
+        avg_rating = Review.objects.filter(
+            course__creator=obj
+        ).aggregate(avg_rating=Avg('rating'))['avg_rating']
+        return float(avg_rating) if avg_rating else 0.0
+
+    def get_phone(self, obj):
+        return getattr(obj, 'phone', None)
+
+
+class InstitutionDetailSerializer(serializers.ModelSerializer):
+    """Detailed institution information including verification and economics"""
+    phone = serializers.SerializerMethodField()
+    owner_name = serializers.SerializerMethodField()
+    verification_status = serializers.SerializerMethodField()
+    verified_by_name = serializers.SerializerMethodField()
+    custom_share_percentage = serializers.SerializerMethodField()
+    courses_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ['id', 'first_name', 'last_name', 'email', 'phone', 'username', 'institution_name',
+                  'date_joined', 'is_active', 'owner_name', 'verification_status', 'verified_by_name', 'custom_share_percentage', 'courses_count']
+
+    def get_owner_name(self, obj):
+        """Return institution owner's full name"""
+        return f"{obj.first_name} {obj.last_name}".strip() or obj.username
+
+    def get_verification_status(self, obj):
+        """Get institution verification status"""
+        from courses.models import Institution
+        try:
+            inst = Institution.objects.get(owner=obj)
+            return inst.verification_status
+        except:
+            return 'pending'
+
+    def get_verified_by_name(self, obj):
+        """Get name of admin who verified institution"""
+        from courses.models import Institution
+        try:
+            inst = Institution.objects.get(owner=obj)
+            if inst.verified_by:
+                return f"{inst.verified_by.first_name} {inst.verified_by.last_name}".strip() or inst.verified_by.username
+        except:
+            pass
+        return None
+
+    def get_courses_count(self, obj):
+        """Count courses under institution"""
+        from courses.models import Course, Institution
+        try:
+            inst = Institution.objects.get(owner=obj)
+            return Course.objects.filter(institution=inst).count()
+        except:
+            return 0
+
+    def get_custom_share_percentage(self, obj):
+        """Return institution custom share percentage if set"""
+        try:
+            from courses.models import Institution
+            inst = Institution.objects.filter(owner=obj).first()
+            if inst and inst.custom_share_percentage is not None:
+                return float(inst.custom_share_percentage)
+        except Exception:
+            pass
+        return None
+
+    def get_phone(self, obj):
+        # Institutions may keep phone on related Institution record; try that first
+        try:
+            from courses.models import Institution
+            inst = Institution.objects.filter(owner=obj).first()
+            if inst and getattr(inst, 'phone', None):
+                return inst.phone
+        except Exception:
+            pass
+        return getattr(obj, 'phone', None)

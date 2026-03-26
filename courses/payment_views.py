@@ -350,13 +350,11 @@ class DownloadsAnalyticsView(APIView):
         exts = ('.pdf', '.zip', '.doc', '.docx', '.ppt', '.pptx', '.xls', '.xlsx', '.csv', '.mp4', '.mp3')
         qs = Visit.objects.filter(created_at__date__gte=start_date.date(), created_at__date__lte=end_date.date())
 
-        # Filter by path containing /media/ OR ending with a known extension
-        downloads_qs = qs.filter(models.Q(full_url__icontains='/media/') | models.Q(path__iendswith=exts[0])
-                                 | models.Q(path__iendswith=exts[1]) | models.Q(path__iendswith=exts[2])
-                                 | models.Q(path__iendswith=exts[3]) | models.Q(path__iendswith=exts[4])
-                                 | models.Q(path__iendswith=exts[5]) | models.Q(path__iendswith=exts[6])
-                                 | models.Q(path__iendswith=exts[7]) | models.Q(path__iendswith=exts[8])
-                                 | models.Q(path__iendswith=exts[9]) | models.Q(path__iendswith=exts[10]))
+        # Build a case-insensitive regex to match known file extensions (e.g. ".pdf", ".zip")
+        ext_pattern = r"\.({})$".format('|'.join(e.lstrip('.') for e in exts))
+
+        # Filter by path containing /media/ OR path ending with one of the known extensions (case-insensitive)
+        downloads_qs = qs.filter(Q(full_url__icontains='/media/') | Q(path__iregex=ext_pattern))
 
         # Top downloaded paths
         top = list(downloads_qs.values('full_url').annotate(count=Count('id')).order_by('-count')[:50])

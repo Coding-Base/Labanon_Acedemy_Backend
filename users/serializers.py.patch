@@ -1,0 +1,40 @@
+*** Begin Patch
+*** Update File: backend/users/serializers.py
+@@
+ class InstitutionDetailSerializer(serializers.ModelSerializer):
+     """Detailed institution information including verification and economics"""
+     phone = serializers.SerializerMethodField()
+     owner_name = serializers.SerializerMethodField()
+     verification_status = serializers.SerializerMethodField()
+     verified_by_name = serializers.SerializerMethodField()
++    custom_share_percentage = serializers.SerializerMethodField()
+     courses_count = serializers.SerializerMethodField()
+ 
+     class Meta:
+         model = User
+-        fields = ['id', 'first_name', 'last_name', 'email', 'phone', 'username', 'institution_name',
+-                  'date_joined', 'is_active', 'owner_name', 'verification_status', 'verified_by_name', 'courses_count']
++        fields = ['id', 'first_name', 'last_name', 'email', 'phone', 'username', 'institution_name',
++                  'date_joined', 'is_active', 'owner_name', 'verification_status', 'verified_by_name', 'custom_share_percentage', 'courses_count']
+@@
+     def get_courses_count(self, obj):
+         """Count courses under institution"""
+         from courses.models import Course, Institution
+         try:
+             inst = Institution.objects.get(owner=obj)
+             return Course.objects.filter(institution=inst).count()
+         except:
+             return 0
++
++    def get_custom_share_percentage(self, obj):
++        """Return institution custom share percentage if set"""
++        try:
++            from courses.models import Institution
++            inst = Institution.objects.filter(owner=obj).first()
++            if inst and inst.custom_share_percentage is not None:
++                # return as float for JSON serialization
++                return float(inst.custom_share_percentage)
++        except Exception:
++            pass
++        return None
+*** End Patch
