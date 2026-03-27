@@ -44,6 +44,7 @@ INSTALLED_APPS = [a for a in INSTALLED_APPS if a]
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
+    'lep_backend.middleware.api_json_exceptions.ApiJsonExceptionMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'lep_backend.middleware.rate_limit.RateLimitMiddleware',
     'lep_backend.middleware.security_headers.SecurityHeadersMiddleware',
