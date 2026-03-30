@@ -85,18 +85,19 @@ class TrackPageView(APIView):
             # attempt geo enrichment if geoip2 is available and IP present
             try:
                 if visit.ip_address:
-                    import geoip2.database
                     dbpath = getattr(settings, 'GEOIP_DB_PATH', None)
                     if dbpath:
                         try:
-                            reader = geoip2.database.Reader(dbpath)
+                            from importlib import import_module
+                            geoip2 = import_module('geoip2.database')
+                            reader = geoip2.Reader(dbpath)
                             rec = reader.city(visit.ip_address)
                             visit.country = rec.country.name
                             visit.region = rec.subdivisions.most_specific.name
                             visit.city = rec.city.name
                             visit.save(update_fields=['country','region','city'])
-                        except Exception:
-                            pass
+                        except (ImportError, Exception):
+                            pass  # geoip2 not installed or geo lookup failed
             except Exception:
                 pass
 

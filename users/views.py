@@ -54,6 +54,33 @@ class DashboardView(APIView):
             sales = Payment.objects.filter(course__in=courses_qs, status=Payment.SUCCESS).aggregate(total=Sum('amount'))['total'] or 0
             students = Enrollment.objects.filter(course__in=courses_qs, purchased=True).values('user').distinct().count()
             data.update({'courses_count': courses_count, 'sales_total': float(sales), 'students_count': students})
+            
+            # Add tutor verification status
+            try:
+                from courses.models import TutorVerificationDocument
+                # Check if all documents are approved
+                tutor_docs = TutorVerificationDocument.objects.filter(tutor=user)
+                if tutor_docs.exists():
+                    # If any document is rejected, overall status is rejected
+                    if tutor_docs.filter(status=TutorVerificationDocument.STATUS_REJECTED).exists():
+                        data['verification_status'] = 'rejected'
+                        # Get rejection reason from the rejected document's review_notes
+                        rejected_doc = tutor_docs.filter(status=TutorVerificationDocument.STATUS_REJECTED).first()
+                        data['rejection_reason'] = rejected_doc.review_notes if rejected_doc else 'Documents need revision'
+                    # If all are approved
+                    elif tutor_docs.filter(status=TutorVerificationDocument.STATUS_APPROVED).count() == tutor_docs.count():
+                        data['verification_status'] = 'approved'
+                        data['rejection_reason'] = None
+                    # Otherwise pending
+                    else:
+                        data['verification_status'] = 'pending'
+                        data['rejection_reason'] = None
+                else:
+                    data['verification_status'] = None
+                    data['rejection_reason'] = None
+            except ImportError:
+                data['verification_status'] = None
+                data['rejection_reason'] = None
 
         elif role == User.STUDENT:
             enrollments = Enrollment.objects.filter(user=user)
@@ -86,6 +113,20 @@ class DashboardView(APIView):
                 'courses_count': courses_count, 
                 'students_count': len(student_ids)
             })
+            
+            # Add institution verification status
+            try:
+                from courses.models import Institution
+                inst = Institution.objects.filter(owner=user).first()
+                if inst:
+                    data['verification_status'] = inst.verification_status
+                    data['rejection_reason'] = inst.rejection_reason if inst.verification_status == 'rejected' else None
+                else:
+                    data['verification_status'] = None
+                    data['rejection_reason'] = None
+            except ImportError:
+                data['verification_status'] = None
+                data['rejection_reason'] = None
 
         else:  # researcher or admin
             users_count = User.objects.count()

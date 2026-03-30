@@ -24,7 +24,6 @@ from .payment_views import (
 from .verification_views import (
     InstitutionComplianceFormView, AdminComplianceDashboardView,
     ApproveInstitutionVerificationView, RejectInstitutionVerificationView,
-    LegalDocumentListView, AdminLegalDocumentView,
     TutorComplianceFormView
 )
 
@@ -91,12 +90,6 @@ urlpatterns = [
     # Admin verification actions
     path('admin/institutions/verify/approve/', ApproveInstitutionVerificationView.as_view(), name='approve-institution-verification'),
     path('admin/institutions/verify/reject/', RejectInstitutionVerificationView.as_view(), name='reject-institution-verification'),
-    
-    # Legal documents (public)
-    path('legal-documents/', LegalDocumentListView.as_view(), name='legal-documents-list'),
-    
-    # Legal documents (admin)
-    path('admin/legal-documents/', AdminLegalDocumentView.as_view(), name='admin-legal-documents'),
 ]
 
 router = DefaultRouter()
