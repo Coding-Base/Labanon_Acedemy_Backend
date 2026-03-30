@@ -22,6 +22,7 @@ from .serializers import (
     VerificationDocumentSerializer, TutorVerificationDocumentSerializer,
     LegalDocumentSerializer, InstitutionVerificationSerializer
 )
+from users.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -126,17 +127,24 @@ class InstitutionComplianceFormView(APIView):
             )
 
     def post(self, request):
-        """Submit a new verification document."""
+        """Submit a new verification document (accepts either file or Google Drive link)."""
         try:
             institution_id = request.data.get('institution_id')
             document_type = request.data.get('document_type')
             document_file = request.data.get('document_file')
+            document_link = request.data.get('document_link')  # Google Drive link
             document_name = request.data.get('document_name')
             
-            # Validate required fields
-            if not all([institution_id, document_type, document_file, document_name]):
+            # Validate required fields - must have either file or link
+            if not all([institution_id, document_type, document_name]):
                 return Response(
-                    {'detail': 'Missing required fields: institution_id, document_type, document_file, document_name'},
+                    {'detail': 'Missing required fields: institution_id, document_type, document_name'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if not document_file and not document_link:
+                return Response(
+                    {'detail': 'Must provide either document_file or document_link'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
@@ -149,11 +157,11 @@ class InstitutionComplianceFormView(APIView):
                     status=status.HTTP_403_FORBIDDEN
                 )
             
-            # Create document
+            # Create document - save either file or link
             doc = VerificationDocument.objects.create(
                 institution=institution,
                 document_type=document_type,
-                document_file=document_file,
+                document_file=document_file or document_link,  # Save file or link
                 document_name=document_name,
                 status=VerificationDocument.STATUS_PENDING
             )
@@ -627,23 +635,31 @@ class TutorComplianceFormView(APIView):
             )
 
     def post(self, request):
-        """Submit a new tutor verification document."""
+        """Submit a new tutor verification document (accepts either file or Google Drive link)."""
         try:
             document_type = request.data.get('document_type')
             document_file = request.data.get('document_file')
+            document_link = request.data.get('document_link')  # Google Drive link
             document_name = request.data.get('document_name')
             
-            if not all([document_type, document_file, document_name]):
+            # Validate required fields - must have either file or link
+            if not all([document_type, document_name]):
                 return Response(
-                    {'detail': 'Missing required fields: document_type, document_file, document_name'},
+                    {'detail': 'Missing required fields: document_type, document_name'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Create document
+            if not document_file and not document_link:
+                return Response(
+                    {'detail': 'Must provide either document_file or document_link'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Create document - save either file or link
             doc = TutorVerificationDocument.objects.create(
                 tutor=request.user,
                 document_type=document_type,
-                document_file=document_file,
+                document_file=document_file or document_link,  # Save file or link
                 document_name=document_name,
                 status=TutorVerificationDocument.STATUS_PENDING
             )
@@ -679,5 +695,308 @@ class TutorComplianceFormView(APIView):
             logger.error(f"Error submitting tutor document: {str(e)}")
             return Response(
                 {'detail': 'Error submitting document'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+# ==================== UNIFIED VERIFICATION APPROVAL/REJECTION ====================
+
+class UnifiedVerificationApprovalView(APIView):
+    """
+    Unified admin endpoint to approve both institution and tutor verification.
+    POST: Approve a submission (institution or tutor)
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, submission_id):
+        """Approve verification submission (institution or tutor)."""
+        if not request.user.is_staff:
+            return Response(
+                {'detail': 'Permission denied. Admin access required.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        try:
+            entity_type = request.data.get('entity_type')
+            reason = request.data.get('reason', '')
+            custom_share_percentage = request.data.get('custom_share_percentage')
+            
+            with transaction.atomic():
+                if entity_type == 'institution':
+                    # Approve institution
+                    institution = Institution.objects.get(id=submission_id)
+                    
+                    # Approve all pending documents
+                    docs = VerificationDocument.objects.filter(
+                        institution=institution,
+                        status=VerificationDocument.STATUS_PENDING
+                    )
+                    
+                    docs.update(
+                        status=VerificationDocument.STATUS_APPROVED,
+                        reviewed_by=request.user,
+                        reviewed_at=timezone.now()
+                    )
+                    
+                    # Update institution verification status
+                    institution.verification_status = Institution.VERIFICATION_APPROVED
+                    institution.verified_by = request.user
+                    institution.verified_at = timezone.now()
+                    
+                    if custom_share_percentage:
+                        try:
+                            institution.custom_share_percentage = Decimal(str(custom_share_percentage))
+                        except:
+                            pass
+                    
+                    institution.save()
+                    
+                    # Send approval email
+                    email_content = f"""
+                    <p>Hello {institution.owner.first_name or institution.owner.username},</p>
+                    <p><strong>Congratulations!</strong> Your institution <strong>{institution.name}</strong> has been verified and approved.</p>
+                    <div class="success-box">
+                        <p><strong>Your account is now fully active!</strong></p>
+                        <p>You can now:</p>
+                        <ul>
+                            <li>Publish courses to the marketplace</li>
+                            <li>Receive payments for course enrollments</li>
+                            <li>Access all institutional features</li>
+                        </ul>
+                    </div>
+                    <p>Thank you for being part of our community. If you have any questions, please contact our support team.</p>
+                    <center><a href="{settings.FRONTEND_URL}/institution/dashboard" class="btn">Go to Dashboard</a></center>
+                    """
+                    
+                    send_verification_email(
+                        institution.owner,
+                        "Institution Verification Approved ✓",
+                        email_content
+                    )
+                    
+                    return Response(
+                        {
+                            'detail': 'Institution approved successfully',
+                            'entity_type': 'institution',
+                            'id': institution.id
+                        },
+                        status=status.HTTP_200_OK
+                    )
+                
+                elif entity_type == 'tutor':
+                    # Approve tutor
+                    tutor = User.objects.get(id=submission_id)
+                    
+                    # Approve all pending documents
+                    docs = TutorVerificationDocument.objects.filter(
+                        tutor=tutor,
+                        status=TutorVerificationDocument.STATUS_PENDING
+                    )
+                    
+                    docs.update(
+                        status=TutorVerificationDocument.STATUS_APPROVED,
+                        reviewed_by=request.user,
+                        reviewed_at=timezone.now()
+                    )
+                    
+                    # Send approval email
+                    email_content = f"""
+                    <p>Hello {tutor.first_name or tutor.username},</p>
+                    <p><strong>Congratulations!</strong> Your tutor verification has been approved.</p>
+                    <div class="success-box">
+                        <p><strong>Your account is now fully verified!</strong></p>
+                        <p>You can now:</p>
+                        <ul>
+                            <li>Create and publish courses</li>
+                            <li>Receive payments from course enrollments</li>
+                            <li>Access all tutor features</li>
+                        </ul>
+                    </div>
+                    <p>Thank you for being part of our community. If you have any questions, please contact our support team.</p>
+                    <center><a href="{settings.FRONTEND_URL}/tutor/dashboard" class="btn">Go to Dashboard</a></center>
+                    """
+                    
+                    send_verification_email(
+                        tutor,
+                        "Tutor Verification Approved ✓",
+                        email_content
+                    )
+                    
+                    return Response(
+                        {
+                            'detail': 'Tutor approved successfully',
+                            'entity_type': 'tutor',
+                            'id': tutor.id
+                        },
+                        status=status.HTTP_200_OK
+                    )
+                
+                else:
+                    return Response(
+                        {'detail': 'Invalid entity_type. Must be "institution" or "tutor"'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+        
+        except Institution.DoesNotExist:
+            return Response(
+                {'detail': 'Institution not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except User.DoesNotExist:
+            return Response(
+                {'detail': 'Tutor not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Error approving verification: {str(e)}")
+            return Response(
+                {'detail': 'Error approving verification'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class UnifiedVerificationRejectionView(APIView):
+    """
+    Unified admin endpoint to reject both institution and tutor verification.
+    POST: Reject a submission (institution or tutor)
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, submission_id):
+        """Reject verification submission (institution or tutor)."""
+        if not request.user.is_staff:
+            return Response(
+                {'detail': 'Permission denied. Admin access required.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        try:
+            entity_type = request.data.get('entity_type')
+            reason = request.data.get('reason', '')
+            
+            if not reason:
+                return Response(
+                    {'detail': 'rejection_reason is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            with transaction.atomic():
+                if entity_type == 'institution':
+                    # Reject institution
+                    institution = Institution.objects.get(id=submission_id)
+                    
+                    # Mark all pending documents as rejected
+                    docs = VerificationDocument.objects.filter(
+                        institution=institution,
+                        status=VerificationDocument.STATUS_PENDING
+                    )
+                    
+                    docs.update(
+                        status=VerificationDocument.STATUS_REJECTED,
+                        reviewed_by=request.user,
+                        reviewed_at=timezone.now(),
+                        review_notes=reason
+                    )
+                    
+                    # Update institution verification status
+                    institution.verification_status = Institution.VERIFICATION_REJECTED
+                    institution.verified_by = request.user
+                    institution.verified_at = timezone.now()
+                    institution.rejection_reason = reason
+                    institution.save()
+                    
+                    # Send rejection email
+                    email_content = f"""
+                    <p>Hello {institution.owner.first_name or institution.owner.username},</p>
+                    <p>Thank you for submitting your institution verification documents. Unfortunately, we were unable to approve your application at this time.</p>
+                    <div class="error-box">
+                        <p><strong>Reason for Rejection:</strong></p>
+                        <p>{reason}</p>
+                    </div>
+                    <p>Please review the feedback above and resubmit your documents with the necessary corrections. You can submit updated documents from your institution dashboard.</p>
+                    <p>If you have any questions, please contact our support team.</p>
+                    <center><a href="{settings.FRONTEND_URL}/institution/dashboard" class="btn">Submit Updated Documents</a></center>
+                    """
+                    
+                    send_verification_email(
+                        institution.owner,
+                        "Institution Verification Update - Action Required",
+                        email_content
+                    )
+                    
+                    return Response(
+                        {
+                            'detail': 'Institution verification rejected',
+                            'entity_type': 'institution',
+                            'id': institution.id
+                        },
+                        status=status.HTTP_200_OK
+                    )
+                
+                elif entity_type == 'tutor':
+                    # Reject tutor
+                    tutor = User.objects.get(id=submission_id)
+                    
+                    # Mark all pending documents as rejected
+                    docs = TutorVerificationDocument.objects.filter(
+                        tutor=tutor,
+                        status=TutorVerificationDocument.STATUS_PENDING
+                    )
+                    
+                    docs.update(
+                        status=TutorVerificationDocument.STATUS_REJECTED,
+                        reviewed_by=request.user,
+                        reviewed_at=timezone.now(),
+                        review_notes=reason
+                    )
+                    
+                    # Send rejection email
+                    email_content = f"""
+                    <p>Hello {tutor.first_name or tutor.username},</p>
+                    <p>Thank you for submitting your tutor verification documents. Unfortunately, we were unable to approve your application at this time.</p>
+                    <div class="error-box">
+                        <p><strong>Reason for Rejection:</strong></p>
+                        <p>{reason}</p>
+                    </div>
+                    <p>Please review the feedback above and resubmit your documents with the necessary corrections. You can submit updated documents from your tutor dashboard.</p>
+                    <p>If you have any questions, please contact our support team.</p>
+                    <center><a href="{settings.FRONTEND_URL}/tutor/dashboard" class="btn">Submit Updated Documents</a></center>
+                    """
+                    
+                    send_verification_email(
+                        tutor,
+                        "Tutor Verification Update - Action Required",
+                        email_content
+                    )
+                    
+                    return Response(
+                        {
+                            'detail': 'Tutor verification rejected',
+                            'entity_type': 'tutor',
+                            'id': tutor.id
+                        },
+                        status=status.HTTP_200_OK
+                    )
+                
+                else:
+                    return Response(
+                        {'detail': 'Invalid entity_type. Must be "institution" or "tutor"'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+        
+        except Institution.DoesNotExist:
+            return Response(
+                {'detail': 'Institution not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except User.DoesNotExist:
+            return Response(
+                {'detail': 'Tutor not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Error rejecting verification: {str(e)}")
+            return Response(
+                {'detail': 'Error rejecting verification'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )

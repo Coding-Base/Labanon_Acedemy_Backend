@@ -24,7 +24,8 @@ from .payment_views import (
 from .verification_views import (
     InstitutionComplianceFormView, AdminComplianceDashboardView,
     ApproveInstitutionVerificationView, RejectInstitutionVerificationView,
-    TutorComplianceFormView
+    TutorComplianceFormView, UnifiedVerificationApprovalView,
+    UnifiedVerificationRejectionView
 )
 
 # Custom payment endpoints MUST be defined before router to take precedence
@@ -90,6 +91,10 @@ urlpatterns = [
     # Admin verification actions
     path('admin/institutions/verify/approve/', ApproveInstitutionVerificationView.as_view(), name='approve-institution-verification'),
     path('admin/institutions/verify/reject/', RejectInstitutionVerificationView.as_view(), name='reject-institution-verification'),
+    
+    # Unified verification submission approval/rejection (handles both tutors and institutions)
+    path('admin/verify-submission/<int:submission_id>/approve/', UnifiedVerificationApprovalView.as_view(), name='verify-submission-approve'),
+    path('admin/verify-submission/<int:submission_id>/reject/', UnifiedVerificationRejectionView.as_view(), name='verify-submission-reject'),
 ]
 
 router = DefaultRouter()
