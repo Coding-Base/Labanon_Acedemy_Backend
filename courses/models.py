@@ -713,6 +713,15 @@ class VerificationDocument(models.Model):
         on_delete=models.CASCADE,
         related_name='verification_documents'
     )
+    # Link to the compliance submission folder
+    submission = models.ForeignKey(
+        'ComplianceSubmission',
+        on_delete=models.CASCADE,
+        related_name='institution_documents',
+        null=True,
+        blank=True,
+        help_text="Compliance submission folder this document belongs to"
+    )
     document_type = models.CharField(max_length=50, choices=DOCUMENT_TYPE_CHOICES)
     document_file = models.CharField(
         max_length=512,
@@ -771,6 +780,15 @@ class TutorVerificationDocument(models.Model):
         on_delete=models.CASCADE,
         related_name='verification_documents'
     )
+    # Link to the compliance submission folder
+    submission = models.ForeignKey(
+        'ComplianceSubmission',
+        on_delete=models.CASCADE,
+        related_name='tutor_documents',
+        null=True,
+        blank=True,
+        help_text="Compliance submission folder this document belongs to"
+    )
     document_type = models.CharField(max_length=50, choices=DOCUMENT_TYPE_CHOICES)
     document_file = models.CharField(
         max_length=512,
@@ -800,6 +818,95 @@ class TutorVerificationDocument(models.Model):
     
     def __str__(self):
         return f"{self.tutor.username} - {self.get_document_type_display()}"
+
+
+class ComplianceSubmission(models.Model):
+    """
+    Container for a batch of compliance documents submitted by a tutor or institution.
+    This groups multiple documents into a single submission folder that can be reviewed together.
+    """
+    
+    ENTITY_TYPE_TUTOR = 'tutor'
+    ENTITY_TYPE_INSTITUTION = 'institution'
+    
+    ENTITY_TYPE_CHOICES = [
+        (ENTITY_TYPE_TUTOR, 'Tutor'),
+        (ENTITY_TYPE_INSTITUTION, 'Institution'),
+    ]
+    
+    STATUS_PENDING = 'pending'
+    STATUS_APPROVED = 'approved'
+    STATUS_REJECTED = 'rejected'
+    
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending Review'),
+        (STATUS_APPROVED, 'Approved'),
+        (STATUS_REJECTED, 'Rejected'),
+    ]
+    
+    # Submission identity
+    submission_id = models.CharField(max_length=100, unique=True, help_text="Unique batch ID for this submission")
+    entity_type = models.CharField(max_length=20, choices=ENTITY_TYPE_CHOICES)
+    tutor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='compliance_submissions'
+    )
+    institution = models.ForeignKey(
+        Institution,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='compliance_submissions'
+    )
+    
+    # Contact information
+    contact_name = models.CharField(max_length=255)
+    contact_email = models.EmailField()
+    contact_phone = models.CharField(max_length=20, blank=True)
+    
+    # Status
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_PENDING
+    )
+    comments = models.TextField(blank=True, help_text="Submission comments from the user")
+    
+    # Timestamps
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reviewed_compliance_submissions'
+    )
+    review_notes = models.TextField(blank=True, help_text="Admin notes on the submission")
+    
+    class Meta:
+        ordering = ['-submitted_at']
+        verbose_name = 'Compliance Submission'
+        verbose_name_plural = 'Compliance Submissions'
+        unique_together = [('entity_type', 'tutor', 'submitted_at')]
+    
+    def __str__(self):
+        entity = self.tutor.username if self.tutor else self.institution.name
+        return f"{entity} - {self.submission_id}"
+    
+    def get_all_documents(self):
+        """
+        Get all documents in this submission, whether from tutor or institution.
+        Returns a combined queryset of both types.
+        """
+        from django.db.models import Q
+        if self.entity_type == self.ENTITY_TYPE_TUTOR:
+            return self.tutor_documents.all()
+        else:
+            return self.institution_documents.all()
 
 
 class LegalDocument(models.Model):

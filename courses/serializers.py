@@ -12,7 +12,7 @@ from .models import (
     CartItem, Diploma, DiplomaEnrollment, Portfolio, 
     PortfolioGalleryItem, Certificate, Review, GospelVideo,
     ModuleQuiz, QuizQuestion, QuizOption, ModuleQuizAttempt, QuizAnswer,
-    VerificationDocument, TutorVerificationDocument, LegalDocument
+    VerificationDocument, TutorVerificationDocument, LegalDocument, ComplianceSubmission
 )
 from .models import Visit
 

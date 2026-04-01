@@ -27,6 +27,11 @@ from .verification_views import (
     TutorComplianceFormView, UnifiedVerificationApprovalView,
     UnifiedVerificationRejectionView
 )
+from .batch_compliance_views import (
+    ComplianceBatchSubmissionView, ComplianceFolderDashboardView,
+    VerificationFolderAdminDashboardView, ApproveComplianceFolderView,
+    RejectComplianceFolderView
+)
 
 # Custom payment endpoints MUST be defined before router to take precedence
 urlpatterns = [
@@ -95,6 +100,21 @@ urlpatterns = [
     # Unified verification submission approval/rejection (handles both tutors and institutions)
     path('admin/verify-submission/<int:submission_id>/approve/', UnifiedVerificationApprovalView.as_view(), name='verify-submission-approve'),
     path('admin/verify-submission/<int:submission_id>/reject/', UnifiedVerificationRejectionView.as_view(), name='verify-submission-reject'),
+    
+    # ==================== NEW BATCH COMPLIANCE SUBMISSION SYSTEM ====================
+    
+    # Submit compliance folder (tutor or institution)
+    path('compliance/batch-submit/', ComplianceBatchSubmissionView.as_view(), name='compliance-batch-submit'),
+    
+    # Get user's compliance folders (tutor/institution dashboard)
+    path('compliance/my-folders/', ComplianceFolderDashboardView.as_view(), name='compliance-my-folders'),
+    
+    # Admin verification folder dashboard
+    path('admin/compliance/folders/', VerificationFolderAdminDashboardView.as_view(), name='admin-compliance-folders'),
+    
+    # Admin actions on compliance folders
+    path('admin/compliance/folders/<int:submission_id>/approve/', ApproveComplianceFolderView.as_view(), name='compliance-folder-approve'),
+    path('admin/compliance/folders/<int:submission_id>/reject/', RejectComplianceFolderView.as_view(), name='compliance-folder-reject'),
 ]
 
 router = DefaultRouter()

@@ -16,7 +16,7 @@ from django.db import transaction
 
 from .models import (
     Institution, VerificationDocument, TutorVerificationDocument, 
-    LegalDocument, Course
+    LegalDocument, Course, ComplianceSubmission
 )
 from .serializers import (
     VerificationDocumentSerializer, TutorVerificationDocumentSerializer,
