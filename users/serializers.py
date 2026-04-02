@@ -389,3 +389,12 @@ class InstitutionDetailSerializer(serializers.ModelSerializer):
         except Exception:
             pass
         return getattr(obj, 'phone', None)
+
+
+class VerificationStatusSerializer(serializers.Serializer):
+    """Serializer for user verification status response"""
+    role = serializers.CharField()
+    is_verified = serializers.BooleanField()
+    verification_status = serializers.CharField()  # 'pending', 'approved', 'rejected', 'not_applicable'
+    reason = serializers.CharField(required=False, allow_blank=True)
+    verified_at = serializers.DateTimeField(required=False, allow_null=True)

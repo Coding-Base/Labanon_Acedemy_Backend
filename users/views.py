@@ -15,8 +15,9 @@ from django.utils import timezone
 
 from .models import User
 from .models import Review
-from .serializers import UserSerializer, RegisterSerializer, StudentDetailSerializer, TutorDetailSerializer, InstitutionDetailSerializer
+from .serializers import UserSerializer, RegisterSerializer, StudentDetailSerializer, TutorDetailSerializer, InstitutionDetailSerializer, VerificationStatusSerializer
 from .permissions import IsMasterAdmin
+from .verification import get_user_verification_status
 from courses.models import Course, Enrollment, Payment
 from cbt.models import ExamAttempt
 from .models import TrialConfig
@@ -135,6 +136,21 @@ class DashboardView(APIView):
             data.update({'users_count': users_count, 'courses_count': courses_count, 'payments_total': float(payments_total)})
 
         return Response(data)
+
+
+class VerificationStatusView(APIView):
+    """
+    Returns current user's verification status.
+    For tutors/institutions, checks ComplianceSubmission and document status.
+    For others, always verified (no restrictions).
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        verification_status = get_user_verification_status(user)
+        serializer = VerificationStatusSerializer(verification_status)
+        return Response(serializer.data)
 
 
 class StandardResultsSetPagination(PageNumberPagination):

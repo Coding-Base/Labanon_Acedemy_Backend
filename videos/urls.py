@@ -8,5 +8,6 @@ router.register(r'', VideoViewSet, basename='video')
 urlpatterns = [
     path('', include(router.urls)),
     # Worker notification endpoint (no authentication required)
-    path('<uuid:video_id>/update-encoding-status/', update_video_encoding_status, name='update-encoding-status'),
+    # Accept both UUID and string video IDs to support various formats
+    path('<str:video_id>/update-encoding-status/', update_video_encoding_status, name='update-encoding-status'),
 ]
