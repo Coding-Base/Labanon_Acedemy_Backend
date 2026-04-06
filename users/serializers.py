@@ -3,7 +3,7 @@ from django.core.validators import RegexValidator
 from django.conf import settings
 from django.db import models
 from django.db.models import Sum, Avg
-from .models import User
+from .models import User, InstitutionProfile
 from .models import TrialConfig, Review
 import uuid
 
@@ -41,6 +41,14 @@ class RegisterSerializer(serializers.ModelSerializer):
         model = User
         fields = ['username', 'email', 'password', 'role', 'institution_name', 'admin_secret']
 
+    def validate_email(self, value):
+        """Ensure email is not already used (verified or unverified)"""
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError(
+                "This email is already registered. Please use a different email or reset your password if you forgot it."
+            )
+        return value
+
     def create(self, validated_data):
         password = validated_data.pop('password')
         role = validated_data.get('role')
@@ -61,9 +69,11 @@ class RegisterSerializer(serializers.ModelSerializer):
             if not (is_admin_request or is_valid_invite):
                 raise serializers.ValidationError({'role': 'Cannot register as admin.'})
 
-        # 1. Create the User
+        # 1. Create the User with email verification token
         user = User(**validated_data)
         user.set_password(password)
+        user.email_verified = False
+        user.email_verification_token = str(uuid.uuid4())
         user.save()
 
         # If account was created as an Admin (and validation allowed it), set staff/superuser flags
@@ -80,6 +90,7 @@ class RegisterSerializer(serializers.ModelSerializer):
             try:
                 # Local import to avoid circular dependency (User -> Course -> User)
                 from courses.models import Institution, Portfolio
+                from .models import InstitutionProfile
                 
                 # Get name from input or default to Username
                 inst_name = validated_data.get('institution_name')
@@ -100,7 +111,21 @@ class RegisterSerializer(serializers.ModelSerializer):
                     public_token=str(uuid.uuid4()), # Generate unique public link
                     published=False # Default to draft
                 )
-                print(f"Auto-created Institution & Portfolio for {user.username}")
+                
+                # Create InstitutionProfile Record for detailed profile data
+                InstitutionProfile.objects.create(
+                    user=user,
+                    full_name=validated_data.get('full_name', ''),
+                    job_title=validated_data.get('job_title', ''),
+                    work_email=validated_data.get('work_email', user.email),
+                    institution_name=inst_name,
+                    institution_type=validated_data.get('institution_type', 'tutorial_center'),
+                    position=validated_data.get('position', 'others'),
+                    department=validated_data.get('department', ''),
+                    country=validated_data.get('country', ''),
+                    purpose=validated_data.get('purpose', '')
+                )
+                print(f"Auto-created Institution, Portfolio & InstitutionProfile for {user.username}")
                 
             except Exception as e:
                 # Log error but allow user creation to succeed (prevents registration crash)
@@ -154,6 +179,11 @@ class DjoserUserCreateSerializer(DjoserBaseUserCreateSerializer):
     def create(self, validated_data):
         # Allow Djoser to handle the standard user creation
         user = super().create(validated_data)
+        
+        # Add email verification fields
+        user.email_verified = False
+        user.email_verification_token = str(uuid.uuid4())
+        user.save()
         
         # Add the same auto-creation logic here in case Djoser endpoint is used
         if user.role == User.INSTITUTION:
@@ -398,3 +428,181 @@ class VerificationStatusSerializer(serializers.Serializer):
     verification_status = serializers.CharField()  # 'pending', 'approved', 'rejected', 'not_applicable'
     reason = serializers.CharField(required=False, allow_blank=True)
     verified_at = serializers.DateTimeField(required=False, allow_null=True)
+
+
+class InstitutionProfileSerializer(serializers.ModelSerializer):
+    """Serializer for InstitutionProfile with nested data and calculated fields"""
+    purpose_list = serializers.SerializerMethodField()
+    certifications_list = serializers.SerializerMethodField()
+    
+    class Meta:
+        from .models import InstitutionProfile
+        model = InstitutionProfile
+        fields = [
+            'id', 'user', 'full_name', 'job_title', 'work_email',
+            'institution_name', 'institution_type', 'position', 'department', 'country',
+            'purpose', 'purpose_list', 'can_create_diploma_courses', 'can_create_degree_programs',
+            'can_upload_projects', 'allowed_certifications', 'certifications_list', 'dashboard_variant',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = [
+            'can_create_diploma_courses', 'can_create_degree_programs', 'can_upload_projects',
+            'allowed_certifications', 'dashboard_variant', 'created_at', 'updated_at'
+        ]
+    
+    def get_purpose_list(self, obj):
+        """Return purpose as a list of dicts with value and label"""
+        from .models import InstitutionProfile
+        purpose_map = {choice[0]: choice[1] for choice in InstitutionProfile.PURPOSE_CHOICES}
+        return [
+            {'value': p.strip(), 'label': purpose_map.get(p.strip(), p.strip())}
+            for p in obj.purpose.split(',') if p.strip()
+        ]
+    
+    def get_certifications_list(self, obj):
+        """Return certifications as a list"""
+        return obj.get_certifications_list()
+
+
+class RegisterWithInstitutionProfileSerializer(serializers.Serializer):
+    """Enhanced registration serializer that handles institution profile data"""
+    # Standard user fields
+    username = serializers.CharField(required=True)
+    email = serializers.EmailField(required=True)
+    password = serializers.CharField(write_only=True, required=True)
+    first_name = serializers.CharField(required=True)
+    last_name = serializers.CharField(required=True)
+    role = serializers.ChoiceField(choices=User.ROLE_CHOICES, default=User.STUDENT)
+    
+    # Institution-specific fields (only required if role == 'institution')
+    institution_name = serializers.CharField(required=False, allow_blank=True)
+    full_name = serializers.CharField(required=False, allow_blank=True)
+    job_title = serializers.CharField(required=False, allow_blank=True)
+    work_email = serializers.EmailField(required=False, allow_blank=True)
+    institution_type = serializers.CharField(required=False, allow_blank=True)
+    position = serializers.CharField(required=False, allow_blank=True)
+    department = serializers.CharField(required=False, allow_blank=True)
+    country = serializers.CharField(required=False, allow_blank=True)
+    purpose = serializers.CharField(required=False, allow_blank=True)
+    
+    def validate(self, attrs):
+        """Validate that institution fields are provided if role is institution"""
+        role = attrs.get('role')
+        
+        if role == User.INSTITUTION:
+            required_fields = ['institution_name', 'institution_type', 'position', 'department', 'country']
+            for field in required_fields:
+                if not attrs.get(field):
+                    raise serializers.ValidationError({field: f"{field} is required for institution accounts"})
+        
+        return attrs
+    
+    def create(self, validated_data):
+        """Create user and institution profile"""
+        from .models import InstitutionProfile
+        
+        # Extract institution fields
+        institution_fields = {
+            'full_name': validated_data.pop('full_name', ''),
+            'job_title': validated_data.pop('job_title', ''),
+            'work_email': validated_data.pop('work_email', ''),
+            'institution_name': validated_data.pop('institution_name', ''),
+            'institution_type': validated_data.pop('institution_type', ''),
+            'position': validated_data.pop('position', ''),
+            'department': validated_data.pop('department', ''),
+            'country': validated_data.pop('country', ''),
+            'purpose': validated_data.pop('purpose', ''),
+        }
+        
+        password = validated_data.pop('password')
+        role = validated_data.get('role')
+        
+        # Create user
+        user = User(**validated_data)
+        user.set_password(password)
+        # Mark email as unverified initially
+        user.email_verified = False
+        user.email_verification_token = str(uuid.uuid4())
+        user.save()
+        
+        # Create institution profile if role is institution
+        if role == User.INSTITUTION:
+            InstitutionProfile.objects.create(
+                user=user,
+                **{k: v for k, v in institution_fields.items() if v}
+            )
+            
+            # Also auto-create Institution and Portfolio (existing logic)
+            try:
+                from courses.models import Institution, Portfolio
+                inst_name = institution_fields.get('institution_name', f"{user.username}'s Institution")
+                
+                institution = Institution.objects.create(
+                    owner=user,
+                    name=inst_name,
+                    description=f"Welcome to {inst_name}."
+                )
+                
+                Portfolio.objects.create(
+                    institution=institution,
+                    title=inst_name,
+                    public_token=str(uuid.uuid4()),
+                    published=False
+                )
+            except Exception as e:
+                print(f"Warning: Failed to auto-create institution: {e}")
+        
+        return user
+
+
+class EmailVerificationSerializer(serializers.Serializer):
+    """Serializer for email verification"""
+    token = serializers.CharField(required=True)
+    
+    def validate_token(self, value):
+        """Validate that the token exists and hasn't expired"""
+        try:
+            user = User.objects.get(email_verification_token=value, email_verified=False)
+        except User.DoesNotExist:
+            raise serializers.ValidationError("Invalid or expired verification token")
+        return value
+    
+    def save(self):
+        """Mark user's email as verified"""
+        from django.utils import timezone
+        token = self.validated_data.get('token')
+        user = User.objects.get(email_verification_token=token)
+        user.email_verified = True
+        user.email_verified_at = timezone.now()
+        user.email_verification_token = None
+        user.save()
+        return user
+
+
+class ResendVerificationEmailSerializer(serializers.Serializer):
+    """Serializer for resending verification email"""
+    email = serializers.EmailField(
+        error_messages={
+            'required': 'Email address is required.',
+            'invalid': 'Please enter a valid email address.',
+        }
+    )
+    
+    def validate_email(self, value):
+        """Check if email exists and is unverified"""
+        # Check if any unverified user with this email exists
+        unverified_users = User.objects.filter(email=value, email_verified=False)
+        
+        if not unverified_users.exists():
+            raise serializers.ValidationError(
+                "No unverified account found with this email. It may already be verified or doesn't exist. "
+                "Please register a new account or check a different email."
+            )
+        
+        # If multiple unverified accounts exist, warn the user
+        if unverified_users.count() > 1:
+            raise serializers.ValidationError(
+                "Multiple unverified accounts found with this email. Please contact support for assistance."
+            )
+        
+        return value

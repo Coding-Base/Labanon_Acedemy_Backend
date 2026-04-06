@@ -1,5 +1,9 @@
 from django.urls import path
-from .views import RegisterView, MeView, UserAdminViewSet, ChangePasswordView, ProfileUpdateView, DashboardView, VerificationStatusView, TrialDaysView, ReviewsPublicView, ReviewDetailView
+from .views import (
+    RegisterView, MeView, UserAdminViewSet, ChangePasswordView, ProfileUpdateView, 
+    DashboardView, VerificationStatusView, TrialDaysView, ReviewsPublicView, ReviewDetailView,
+    EmailVerificationView, ResendVerificationEmailView, InstitutionProfileView, InstitutionProfileDetailView
+)
 from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
@@ -29,6 +33,12 @@ urlpatterns = [
     path('profile-update/', ProfileUpdateView.as_view(), name='profile_update'),
     path('password-reset/', PasswordResetRequestView.as_view(), name='password-reset-request'),
     path('password-reset-confirm/', PasswordResetConfirmView.as_view(), name='password-reset-confirm'),
+    # Email verification endpoints
+    path('verify-email/', EmailVerificationView.as_view(), name='verify-email'),
+    path('resend-verification-email/', ResendVerificationEmailView.as_view(), name='resend-verification-email'),
+    # Institution profile endpoints
+    path('institution-profile/', InstitutionProfileView.as_view(), name='institution-profile'),
+    path('institution-profile/<int:user_id>/', InstitutionProfileDetailView.as_view(), name='institution-profile-detail'),
 ]
 
 

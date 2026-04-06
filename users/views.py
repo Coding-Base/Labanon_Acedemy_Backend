@@ -12,6 +12,7 @@ from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from django.utils.encoding import force_bytes, force_str
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+import uuid
 
 from .models import User
 from .models import Review
@@ -31,6 +32,25 @@ class RegisterView(generics.CreateAPIView):
     queryset = User.objects.all()
     permission_classes = [permissions.AllowAny]
     serializer_class = RegisterSerializer
+    
+    def perform_create(self, serializer):
+        user = serializer.save()
+        # Send verification email
+        self._send_verification_email(user)
+    
+    def _send_verification_email(self, user):
+        """Send email verification link to user"""
+        try:
+            verification_url = f"{settings.FRONTEND_URL}/verify-email?token={user.email_verification_token}"
+            send_mail(
+                subject='Verify Your Email - LightHub Academy',
+                message=f'Click the link below to verify your email address:\n\n{verification_url}\n\nThis link will expire in 48 hours.',
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[user.email],
+                fail_silently=False,
+            )
+        except Exception as e:
+            print(f"Failed to send verification email to {user.email}: {e}")
 
 
 class MeView(generics.RetrieveUpdateAPIView):
@@ -502,3 +522,171 @@ class ReviewDetailView(generics.RetrieveUpdateDestroyAPIView):
         if not obj.is_approved and not (request.user and getattr(request.user, 'is_staff', False)):
             return Response(status=status.HTTP_404_NOT_FOUND)
         return super().retrieve(request, *args, **kwargs)
+
+
+class EmailVerificationView(APIView):
+    """Verify user email with token"""
+    permission_classes = [permissions.AllowAny]
+    
+    def post(self, request):
+        from .serializers import EmailVerificationSerializer
+        
+        serializer = EmailVerificationSerializer(data=request.data)
+        if serializer.is_valid():
+            user = serializer.save()
+            return Response(
+                {
+                    'detail': 'Email verified successfully',
+                    'user': UserSerializer(user).data
+                },
+                status=status.HTTP_200_OK
+            )
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ResendVerificationEmailView(APIView):
+    """Resend email verification link"""
+    permission_classes = [permissions.AllowAny]
+    
+    def post(self, request):
+        from .serializers import ResendVerificationEmailSerializer
+        from django.core.mail import send_mail
+        
+        serializer = ResendVerificationEmailSerializer(data=request.data)
+        if serializer.is_valid():
+            email = serializer.validated_data['email']
+            # Get the unverified user (validation ensures there's exactly one)
+            user = User.objects.filter(email=email, email_verified=False).first()
+            
+            if not user:
+                return Response(
+                    {'detail': 'User not found or email already verified. Please check your email or register a new account.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            try:
+                # Regenerate token
+                user.email_verification_token = str(uuid.uuid4())
+                user.save()
+                
+                # Send verification email
+                verification_url = f"{settings.FRONTEND_URL}/verify-email?token={user.email_verification_token}"
+                send_mail(
+                    subject='Verify Your Email - LightHub Academy',
+                    message=f'Click the link below to verify your email:\n\n{verification_url}',
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[user.email],
+                    fail_silently=False,
+                )
+                
+                return Response(
+                    {'detail': f'Verification email has been sent to {email}. Please check your inbox and spam folder.'},
+                    status=status.HTTP_200_OK
+                )
+            except Exception as e:
+                return Response(
+                    {'detail': 'Failed to send verification email. Please try again later or contact support.'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+        
+        # Format validation errors nicely
+        errors = serializer.errors
+        error_messages = []
+        
+        if 'email' in errors:
+            # Extract the validation error message
+            email_errors = errors['email']
+            if isinstance(email_errors, list) and len(email_errors) > 0:
+                error_messages.append(str(email_errors[0]))
+        
+        error_detail = error_messages[0] if error_messages else 'Please provide a valid email address.'
+        
+        return Response(
+            {'detail': error_detail},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+class InstitutionProfileView(APIView):
+    """Get or update institution profile for current user"""
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        from .models import InstitutionProfile
+        from .serializers import InstitutionProfileSerializer
+        
+        try:
+            profile = InstitutionProfile.objects.get(user=request.user)
+            serializer = InstitutionProfileSerializer(profile)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        except InstitutionProfile.DoesNotExist:
+            return Response(
+                {'detail': 'Institution profile not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+    
+    def put(self, request):
+        from .models import InstitutionProfile
+        from .serializers import InstitutionProfileSerializer
+        
+        try:
+            profile = InstitutionProfile.objects.get(user=request.user)
+        except InstitutionProfile.DoesNotExist:
+            return Response(
+                {'detail': 'Institution profile not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        serializer = InstitutionProfileSerializer(profile, data=request.data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class InstitutionProfileDetailView(APIView):
+    """Get institution profile details for a specific user (admin view)"""
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request, user_id):
+        from .models import InstitutionProfile
+        from .serializers import InstitutionProfileSerializer
+        
+        # Only allow admins to view other users' profiles
+        if request.user.id != user_id and not request.user.is_staff:
+            return Response(
+                {'detail': 'You do not have permission to view this profile'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        try:
+            user = User.objects.get(id=user_id)
+            
+            # Try to get institution profile, if not found create from user data
+            try:
+                profile = InstitutionProfile.objects.get(user=user)
+                serializer = InstitutionProfileSerializer(profile)
+                return Response(serializer.data, status=status.HTTP_200_OK)
+            except InstitutionProfile.DoesNotExist:
+                # Create a basic profile from user data if it doesn't exist
+                profile = InstitutionProfile(
+                    user=user,
+                    full_name=f"{user.first_name} {user.last_name}".strip() or user.username,
+                    job_title='',
+                    work_email=user.email,
+                    institution_name=user.institution_name or f"{user.username}'s Institution",
+                    institution_type='tutorial_center',
+                    position='others',
+                    department='',
+                    country='',
+                    purpose=''
+                )
+                profile.save()
+                serializer = InstitutionProfileSerializer(profile)
+                return Response(serializer.data, status=status.HTTP_200_OK)
+                
+        except User.DoesNotExist:
+            return Response(
+                {'detail': 'User not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
