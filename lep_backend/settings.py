@@ -275,6 +275,7 @@ if USE_AWS_S3:
     CLOUDFRONT_DOMAIN = os.environ.get('CLOUDFRONT_DOMAIN')
     CLOUDFRONT_DISTRIBUTION_ID = os.environ.get('CLOUDFRONT_DISTRIBUTION_ID')
     CLOUDFRONT_KEY_PAIR_ID = os.environ.get('CLOUDFRONT_KEY_PAIR_ID')
+    CLOUDFRONT_PRIVATE_KEY_CONTENT = os.environ.get('CLOUDFRONT_PRIVATE_KEY_CONTENT', '')
 
     # Path to the key we generated via Start Command
     # (Generated from CLOUDFRONT_PEM_B64 env var)
