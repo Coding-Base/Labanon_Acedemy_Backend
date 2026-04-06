@@ -687,16 +687,30 @@ class TutorVerificationDocumentSerializer(serializers.ModelSerializer):
 class LegalDocumentSerializer(serializers.ModelSerializer):
     """Serializer for legal documents."""
     updated_by_username = serializers.CharField(source='updated_by.username', read_only=True)
+    tutor_recipients_count = serializers.SerializerMethodField()
+    institution_recipients_count = serializers.SerializerMethodField()
     
     class Meta:
         model = LegalDocument
         fields = [
             'id', 'document_type', 'title', 'description', 'document_file',
-            'version', 'is_active', 'created_at', 'updated_at', 'updated_by_username'
+            'version', 'is_active', 'recipient_type', 'tutor_recipients', 
+            'institution_recipients', 'tutor_recipients_count', 
+            'institution_recipients_count', 'sent_at', 
+            'created_at', 'updated_at', 'updated_by_username'
         ]
         read_only_fields = [
-            'id', 'created_at', 'updated_at', 'updated_by_username'
+            'id', 'created_at', 'updated_at', 'updated_by_username',
+            'tutor_recipients_count', 'institution_recipients_count'
         ]
+    
+    def get_tutor_recipients_count(self, obj):
+        """Return count of tutor recipients."""
+        return obj.tutor_recipients.count()
+    
+    def get_institution_recipients_count(self, obj):
+        """Return count of institution recipients."""
+        return obj.institution_recipients.count()
 
 
 class InstitutionVerificationSerializer(serializers.ModelSerializer):

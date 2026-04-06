@@ -922,6 +922,11 @@ class LegalDocument(models.Model):
         ('other', 'Other'),
     ]
     
+    RECIPIENT_TYPE_CHOICES = [
+        ('all', 'All Users'),
+        ('specific', 'Specific Recipients'),
+    ]
+    
     document_type = models.CharField(max_length=50, choices=DOCUMENT_TYPE_CHOICES, unique=True)
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True)
@@ -931,6 +936,32 @@ class LegalDocument(models.Model):
     )
     version = models.CharField(max_length=20, default='1.0')
     is_active = models.BooleanField(default=True)
+    
+    # Recipient targeting
+    recipient_type = models.CharField(
+        max_length=20,
+        choices=RECIPIENT_TYPE_CHOICES,
+        default='all',
+        help_text="Whether to send to all users or specific recipients"
+    )
+    tutor_recipients = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        blank=True,
+        related_name='legal_documents_assigned_as_tutor',
+        help_text="Tutors who should receive this document"
+    )
+    institution_recipients = models.ManyToManyField(
+        'Institution',
+        blank=True,
+        related_name='legal_documents_assigned',
+        help_text="Institutions who should receive this document"
+    )
+    sent_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When this document was assigned to specific recipients"
+    )
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     updated_by = models.ForeignKey(

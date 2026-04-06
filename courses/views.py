@@ -19,6 +19,7 @@ import os
 
 from users.permissions import IsMasterAdmin
 from users.models import User
+from messaging.models import Message
 from .models import (
     Institution, Course, Module, Lesson, Enrollment, CartItem, 
     Diploma, DiplomaEnrollment, Portfolio, PortfolioGalleryItem, 
@@ -1096,22 +1097,89 @@ class LegalDocumentViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         """
-        Get documents based on user role.
+        Get documents based on user role and recipient type.
         
         - Master admins: see all documents (active and inactive)
-        - Regular users: see only active documents
+        - Tutors: see documents where recipient_type='all' OR user is in tutor_recipients
+        - Institution users: see documents where recipient_type='all' OR institution is in institution_recipients
+        - Other users: see only documents with recipient_type='all'
         """
         if IsMasterAdmin().has_permission(self.request, self):
             return LegalDocument.objects.all().order_by('-updated_at')
-        return LegalDocument.objects.filter(is_active=True).order_by('-updated_at')
+        
+        user = self.request.user
+        
+        # Start with active documents
+        qs = LegalDocument.objects.filter(is_active=True)
+        
+        # Get documents for all users
+        all_user_docs = qs.filter(recipient_type='all')
+        
+        # Get specific documents for this user
+        specific_docs = qs.filter(recipient_type='specific')
+        
+        # Check if user is a tutor or institution owner
+        if hasattr(user, 'tutor_profile') or user.groups.filter(name='Tutors').exists():
+            # User is a tutor - get docs where they're in tutor_recipients
+            tutor_docs = specific_docs.filter(tutor_recipients=user)
+            return (all_user_docs | tutor_docs).distinct().order_by('-updated_at')
+        
+        # Check if user is an institution owner
+        try:
+            institution = user.owned_institutions.first()
+            if institution:
+                # User owns an institution - get docs where their institution is in recipients
+                inst_docs = specific_docs.filter(institution_recipients=institution)
+                return (all_user_docs | inst_docs).distinct().order_by('-updated_at')
+        except:
+            pass
+        
+        # Default: only show all-user documents
+        return all_user_docs.order_by('-updated_at')
     
     def perform_create(self, serializer):
-        """Set the updated_by field to the current user when creating."""
-        serializer.save(updated_by=self.request.user)
+        """Set the updated_by field and create notifications for specific recipients."""
+        instance = serializer.save(updated_by=self.request.user)
+        self._create_notifications_for_document(instance)
     
     def perform_update(self, serializer):
-        """Set the updated_by field to the current user when updating."""
-        serializer.save(updated_by=self.request.user)
+        """Set the updated_by field and create/update notifications for specific recipients."""
+        instance = serializer.save(updated_by=self.request.user)
+        self._create_notifications_for_document(instance)
+    
+    def _create_notifications_for_document(self, document):
+        """
+        Create notification messages when a document is sent to specific recipients.
+        """
+        if document.recipient_type != 'specific':
+            return
+        
+        from django.utils import timezone
+        
+        # Create messages for tutor recipients
+        for tutor in document.tutor_recipients.all():
+            Message.objects.get_or_create(
+                sender=self.request.user,
+                recipient=tutor,
+                subject=f"New Document: {document.title}",
+                defaults={
+                    'message': f"You have been assigned a new document: {document.title}\n\nType: {document.get_document_type_display()}\nVersion: {document.version}\n\nPlease review it on your compliance page.",
+                    'message_type': 'support',
+                }
+            )
+        
+        # Create messages for institution owner (recipient) 
+        for institution in document.institution_recipients.all():
+            if institution.owner:
+                Message.objects.get_or_create(
+                    sender=self.request.user,
+                    recipient=institution.owner,
+                    subject=f"New Document for {institution.name}: {document.title}",
+                    defaults={
+                        'message': f"{institution.name} has been assigned a new document: {document.title}\n\nType: {document.get_document_type_display()}\nVersion: {document.version}\n\nPlease review it on your compliance page.",
+                        'message_type': 'support',
+                    }
+                )
     
     @action(detail=True, methods=['get'], permission_classes=[permissions.IsAuthenticated])
     def download(self, request, pk=None):
