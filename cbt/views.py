@@ -51,20 +51,105 @@ class SubjectViewSet(viewsets.ModelViewSet):
     queryset = Subject.objects.all()
     serializer_class = SubjectSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    pagination_class = StandardResultsSetPagination
 
     @action(detail=True, methods=['get'])
     def questions(self, request, pk=None):
-        """Get all questions for a specific subject"""
+        """Get all questions for a specific subject with pagination"""
         subject = self.get_object()
         questions = subject.questions.all()
-        serializer = QuestionSerializer(questions, many=True)
-        return Response(serializer.data)
+        
+        # Apply pagination
+        paginator = self.pagination_class()
+        paginated_questions = paginator.paginate_queryset(questions, request)
+        serializer = QuestionSerializer(paginated_questions, many=True)
+        
+        return paginator.get_paginated_response(serializer.data)
 
 
 class QuestionViewSet(viewsets.ModelViewSet):
     queryset = Question.objects.all()
     serializer_class = QuestionSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+
+    @action(detail=True, methods=['post'])
+    def update_choices(self, request, pk=None):
+        """Update all choices for a question and set the correct answer.
+        
+        Expected payload:
+        {
+          "choices": [
+            {"text": "Option A", "is_correct": false},
+            {"text": "Option B", "is_correct": true},
+            {"text": "Option C", "is_correct": false},
+            {"text": "Option D", "is_correct": false}
+          ],
+          "text": "Updated question text (optional)",
+          "explanation": "Updated explanation (optional)"
+        }
+        """
+        question = self.get_object()
+        choices_data = request.data.get('choices', [])
+        question_text = request.data.get('text')
+        explanation = request.data.get('explanation')
+
+        # Validate choices
+        if not choices_data or not isinstance(choices_data, list):
+            return Response(
+                {'detail': 'choices array is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if len(choices_data) < 2:
+            return Response(
+                {'detail': 'At least 2 choices are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Check that exactly one choice is marked as correct
+        correct_count = sum(1 for c in choices_data if c.get('is_correct', False))
+        if correct_count != 1:
+            return Response(
+                {'detail': 'Exactly one choice must be marked as correct'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Check that all choices have text
+        if not all(c.get('text', '').strip() for c in choices_data):
+            return Response(
+                {'detail': 'All choices must have non-empty text'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            # Update question text/explanation if provided
+            if question_text:
+                question.text = question_text.strip()
+            if explanation is not None:
+                question.explanation = explanation
+
+            # Delete old choices
+            question.choices.all().delete()
+
+            # Create new choices
+            for choice_data in choices_data:
+                Choice.objects.create(
+                    question=question,
+                    text=choice_data.get('text', '').strip(),
+                    is_correct=choice_data.get('is_correct', False)
+                )
+
+            # Save question
+            question.save()
+
+            serializer = self.get_serializer(question)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        except Exception as e:
+            return Response(
+                {'detail': f'Error updating choices: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
 
 class BulkQuestionUploadView(APIView):
