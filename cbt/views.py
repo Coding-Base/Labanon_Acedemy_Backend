@@ -398,75 +398,117 @@ class BulkQuestionUploadView(APIView):
 
 
 class StartExamView(APIView):
-    """Start a new exam attempt and return the questions for that exam"""
+    """Start a new exam attempt (single or multi-subject) and return the questions for that exam"""
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
         data = request.data
         exam_id = data.get('exam')
-        subject_id = data.get('subject')
-        num_questions = data.get('num_questions')
-        time_limit_minutes = data.get('time_limit_minutes')
-
-        if not all([exam_id, subject_id, num_questions, time_limit_minutes]):
-            return Response(
-                {'detail': 'exam, subject, num_questions, and time_limit_minutes are required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        exam = get_object_or_404(Exam, pk=exam_id)
-        subject = get_object_or_404(Subject, pk=subject_id)
-
-        # Get random questions from the subject
-        all_questions = subject.questions.all()
-        num_questions = min(int(num_questions), all_questions.count())
         
-        if num_questions < 1:
-            return Response(
-                {'detail': 'Not enough questions in this subject'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        selected_questions = random.sample(list(all_questions), num_questions)
+        # Check if this is a multi-subject or single-subject exam
+        subjects_config = data.get('subjects_config')
+        
+        # Single-subject (backward compatibility)
+        if not subjects_config:
+            subject_id = data.get('subject')
+            num_questions = data.get('num_questions')
+            time_limit_minutes = data.get('time_limit_minutes')
+            test_name = None
+            
+            if not all([exam_id, subject_id, num_questions, time_limit_minutes]):
+                return Response(
+                    {'detail': 'exam, subject, num_questions, and time_limit_minutes are required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            exam = get_object_or_404(Exam, pk=exam_id)
+            subject = get_object_or_404(Subject, pk=subject_id)
+            subjects_data = [{'subject_id': subject_id, 'num_questions': num_questions}]
+        
+        # Multi-subject exam
+        else:
+            test_name = data.get('test_name')
+            time_limit_minutes = data.get('time_limit_minutes')
+            
+            if not all([exam_id, subjects_config, time_limit_minutes, test_name]):
+                return Response(
+                    {'detail': 'exam, subjects_config, time_limit_minutes, and test_name are required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if not isinstance(subjects_config, list) or len(subjects_config) == 0:
+                return Response(
+                    {'detail': 'subjects_config must be a non-empty array'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            exam = get_object_or_404(Exam, pk=exam_id)
+            subject = None  # NULL for multi-subject exams
+            subjects_data = subjects_config
+        
+        # Validate all subjects exist and gather question data
+        total_num_questions = 0
+        all_selected_questions = []
+        subjects_info = []
+        
+        for subject_config in subjects_data:
+            subject_id = subject_config.get('subject_id')
+            num_questions = subject_config.get('num_questions')
+            
+            if not subject_id or not num_questions:
+                return Response(
+                    {'detail': 'Each subject config must have subject_id and num_questions'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            subject_obj = get_object_or_404(Subject, pk=subject_id)
+            all_questions = subject_obj.questions.all()
+            num_questions = min(int(num_questions), all_questions.count())
+            
+            if num_questions < 1:
+                return Response(
+                    {'detail': f'Not enough questions in subject {subject_obj.name}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            selected_questions = random.sample(list(all_questions), num_questions)
+            all_selected_questions.extend(selected_questions)
+            total_num_questions += num_questions
+            
+            subjects_info.append({
+                'subject_id': subject_obj.id,
+                'name': subject_obj.name,
+                'num_questions': num_questions
+            })
 
         # Create exam attempt
         exam_attempt = ExamAttempt.objects.create(
             user=request.user,
             exam=exam,
-            subject=subject,
-            num_questions=num_questions,
+            subject=subject,  # NULL for multi-subject
+            test_name=test_name,
+            num_questions=total_num_questions,
             time_limit_minutes=int(time_limit_minutes),
             started_at=timezone.now()
         )
 
         # Create student answer records for each question
-        for question in selected_questions:
+        for question in all_selected_questions:
             StudentAnswer.objects.create(
                 exam_attempt=exam_attempt,
-                question=question
+                question=question,
+                subject=question.subject
             )
 
-        # Return exam attempt details with paginated questions
-        questions = [
-            {
-                'id': q.id,
-                'text': q.text,
-                'choices': [
-                    {'id': c.id, 'text': c.text}
-                    for c in q.choices.all()
-                ]
-            }
-            for q in selected_questions
-        ]
-
+        # Return exam attempt details
         return Response({
             'exam_attempt_id': exam_attempt.id,
+            'test_name': test_name or exam.title,
             'exam_title': exam.title,
-            'subject_name': subject.name,
-            'num_questions': num_questions,
+            'subjects': subjects_info,
+            'num_questions': total_num_questions,
             'time_limit_minutes': time_limit_minutes,
-            'started_at': exam_attempt.started_at,
-            'questions': questions
+            'started_at': exam_attempt.started_at
         }, status=status.HTTP_201_CREATED)
 
 
@@ -619,15 +661,21 @@ class ExamAttemptListView(APIView):
 
 
 class GetExamQuestionsView(APIView):
-    """Get paginated questions for an active exam attempt"""
+    """Get paginated questions for an active exam attempt, optionally filtered by subject"""
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, exam_attempt_id):
         exam_attempt = get_object_or_404(ExamAttempt, pk=exam_attempt_id, user=request.user)
         page = int(request.query_params.get('page', 1))
+        subject_id = request.query_params.get('subject')
         page_size = 10
 
-        student_answers = exam_attempt.student_answers.all().order_by('id')
+        # Filter student answers by subject if specified
+        student_answers = exam_attempt.student_answers.all()
+        if subject_id:
+            student_answers = student_answers.filter(subject_id=int(subject_id))
+        
+        student_answers = student_answers.order_by('id')
         total_count = student_answers.count()
         
         start = (page - 1) * page_size
@@ -662,7 +710,7 @@ class GetExamQuestionsView(APIView):
 
 
 class ExamProgressView(APIView):
-    """Get progress/navigation data for an active exam (which questions answered)"""
+    """Get progress/navigation data for an active exam (which questions answered, organized by subject)"""
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, exam_attempt_id):
@@ -670,6 +718,7 @@ class ExamProgressView(APIView):
         
         student_answers = exam_attempt.student_answers.all().order_by('id')
         
+        # Always return progress array for backward compatibility
         progress = []
         for idx, answer in enumerate(student_answers, 1):
             progress.append({
@@ -679,11 +728,34 @@ class ExamProgressView(APIView):
                 'is_correct': answer.is_correct
             })
 
+        # For multi-subject exams, also return subject-level progress
+        subject_progress = []
+        if exam_attempt.test_name:  # Multi-subject exam
+            # Group by subject
+            from django.db.models import Count, Q
+            subjects_in_attempt = exam_attempt.student_answers.values('subject_id', 'subject__name').distinct()
+            
+            for subject_data in subjects_in_attempt:
+                subject_id = subject_data['subject_id']
+                subject_name = subject_data['subject__name']
+                
+                subject_answers = exam_attempt.student_answers.filter(subject_id=subject_id)
+                answered_count = subject_answers.filter(selected_choice__isnull=False).count()
+                total_count = subject_answers.count()
+                
+                subject_progress.append({
+                    'subject_id': subject_id,
+                    'subject_name': subject_name,
+                    'answered_count': answered_count,
+                    'total_questions': total_count
+                })
+
         return Response({
             'exam_attempt_id': exam_attempt.id,
             'total_questions': exam_attempt.num_questions,
             'answered_count': student_answers.filter(selected_choice__isnull=False).count(),
-            'progress': progress
+            'progress': progress,
+            'subject_progress': subject_progress
         })
 
 

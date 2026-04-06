@@ -66,10 +66,11 @@ class Choice(models.Model):
 
 
 class ExamAttempt(models.Model):
-    """Represents a student's attempt at an exam"""
+    """Represents a student's attempt at an exam (single or multi-subject)"""
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='exam_attempts')
     exam = models.ForeignKey(Exam, on_delete=models.CASCADE, related_name='attempts')
     subject = models.ForeignKey(Subject, on_delete=models.CASCADE, related_name='attempts', null=True, blank=True)
+    test_name = models.CharField(max_length=255, null=True, blank=True, help_text="Custom name for multi-subject exams")
     num_questions = models.PositiveIntegerField()
     time_limit_minutes = models.PositiveIntegerField()
     started_at = models.DateTimeField(default=timezone.now)
@@ -83,13 +84,15 @@ class ExamAttempt(models.Model):
         ordering = ['-started_at']
 
     def __str__(self):
-        return f"{self.user.username} - {self.exam.title} - {self.subject.name if self.subject else 'N/A'}"
+        display_name = self.test_name or (self.subject.name if self.subject else 'Multi-Subject')
+        return f"{self.user.username} - {self.exam.title} - {display_name}"
 
 
 class StudentAnswer(models.Model):
     """Stores a student's answer to a specific question in an exam attempt"""
     exam_attempt = models.ForeignKey(ExamAttempt, on_delete=models.CASCADE, related_name='student_answers')
     question = models.ForeignKey(Question, on_delete=models.CASCADE)
+    subject = models.ForeignKey(Subject, on_delete=models.CASCADE, related_name='student_answers', null=True, blank=True, help_text="Subject of the question - auto-populated from question")
     selected_choice = models.ForeignKey(Choice, on_delete=models.SET_NULL, null=True, blank=True)
     is_correct = models.BooleanField(null=True, blank=True)
     answered_at = models.DateTimeField(default=timezone.now)
@@ -99,4 +102,10 @@ class StudentAnswer(models.Model):
         unique_together = ('exam_attempt', 'question')
 
     def __str__(self):
-        return f"{self.exam_attempt.user.username} - Q{self.question.id}"
+        return f"{self.exam_attempt.user.username} - Q{self.question.id} - {self.subject.name if self.subject else 'N/A'}"
+    
+    def save(self, *args, **kwargs):
+        """Auto-populate subject from question on save"""
+        if not self.subject and self.question:
+            self.subject = self.question.subject
+        super().save(*args, **kwargs)
