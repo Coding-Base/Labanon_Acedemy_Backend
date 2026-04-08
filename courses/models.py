@@ -644,20 +644,43 @@ class ActivationFee(models.Model):
 
 
 class ActivationUnlock(models.Model):
-    """Records which users have unlocked specific exams or interview subjects via payment."""
+    """Records which users have unlocked specific exams or interview subjects via payment.
+    
+    For exam unlocks: stores up to 4 selected subjects via the selected_exam_subjects M2M.
+    For interview subject unlocks: uses the legacy subject_id field.
+    """
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='activations')
     exam_identifier = models.CharField(max_length=255, blank=True, null=True, help_text='Exam id or slug')
-    subject_id = models.IntegerField(blank=True, null=True)
+    subject_id = models.IntegerField(blank=True, null=True, help_text='Legacy field for interview subject unlocks')
     payment = models.ForeignKey(Payment, on_delete=models.SET_NULL, null=True, blank=True, related_name='activations')
     activated_at = models.DateTimeField(auto_now_add=True)
+    
+    # For CBT exam unlocks: store selected subjects (max 4)
+    selected_exam_subjects = models.ManyToManyField('cbt.Subject', blank=True, related_name='student_unlocks', help_text='Selected subjects for CBT exam (max 4)')
 
     class Meta:
-        unique_together = (('user', 'exam_identifier', 'subject_id'),)
+        unique_together = (('user', 'exam_identifier'),)  # One unlock per user per exam (subjects tracked in M2M)
+        indexes = [
+            models.Index(fields=['user', 'exam_identifier']),
+            models.Index(fields=['user', 'subject_id']),
+        ]
+
+    def clean(self):
+        """Validate max 4 subjects selected for exam unlocks."""
+        if self.exam_identifier and self.selected_exam_subjects.count() > 4:
+            raise ValueError('Maximum 4 subjects can be selected for an exam unlock')
 
     def __str__(self):
         if self.subject_id:
-            return f"{self.user.username} unlocked subject {self.subject_id}"
-        return f"{self.user.username} unlocked exam {self.exam_identifier}"
+            return f"{self.user.username} unlocked interview subject {self.subject_id}"
+        if self.exam_identifier:
+            subjects = list(self.selected_exam_subjects.values_list('name', flat=True))
+            return f"{self.user.username} unlocked {self.exam_identifier}: {', '.join(subjects)}"
+        return f"{self.user.username} activation unlock"
+    
+    def get_selected_subjects(self):
+        """Get list of selected subjects for this exam unlock."""
+        return list(self.selected_exam_subjects.values('id', 'name', 'exam_id'))
 
 
 class GospelVideo(models.Model):

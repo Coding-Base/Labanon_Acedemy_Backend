@@ -1057,7 +1057,11 @@ class AdminAnalyticsView(APIView):
 
 
 class ActivationStatusView(APIView):
-    """Check whether current user has unlocked an exam or subject."""
+    """Check whether current user has unlocked an exam or subject.
+    
+    For exam unlocks: returns unlocked status and list of allowed subjects.
+    For interview subjects: maintains legacy behavior.
+    """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -1067,19 +1071,31 @@ class ActivationStatusView(APIView):
         try:
             user = request.user
             unlocked = False
+            allowed_subjects = []
+            
             if subject:
-                # Subject is requested: unlocked if either subject-specific unlock exists
-                # OR the entire exam (exam_identifier) is unlocked for the user.
+                # Subject-specific unlock (interview/legacy path)
                 q = Q(user=user, subject_id=subject)
                 if exam:
-                    q = q | Q(user=user, exam_identifier=str(exam))
+                    q = q | Q(user=user, exam_identifier=str(exam), selected_exam_subjects__id=subject)
                 unlocked = ActivationUnlock.objects.filter(q).exists()
             elif exam:
-                unlocked = ActivationUnlock.objects.filter(user=user, exam_identifier=str(exam)).exists()
+                # Exam unlock: check if student has unlocked this exam
+                try:
+                    unlock = ActivationUnlock.objects.get(user=user, exam_identifier=str(exam))
+                    unlocked = True
+                    # Get list of allowed subjects for CBT flow
+                    allowed_subjects = list(unlock.selected_exam_subjects.values('id', 'name', 'exam_id'))
+                except ActivationUnlock.DoesNotExist:
+                    unlocked = False
             else:
                 unlocked = False
 
-            return Response({'unlocked': unlocked}, status=status.HTTP_200_OK)
+            response_data = {'unlocked': unlocked}
+            if allowed_subjects:
+                response_data['allowed_subjects'] = allowed_subjects
+            
+            return Response(response_data, status=status.HTTP_200_OK)
         except Exception as e:
             logger.error(f"Activation status check failed: {str(e)}")
             return Response({'detail': 'Error checking status'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

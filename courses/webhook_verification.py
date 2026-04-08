@@ -16,6 +16,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from .models import Payment, Enrollment, DiplomaEnrollment, ActivationUnlock
+from cbt.models import Subject
 from .paystack_utils import PaystackClient
 from .flutterwave_utils import FlutterwaveClient
 
@@ -533,7 +534,16 @@ class PaymentReconciliation:
 
 # Helper functions for unlock payment handling
 def _handle_unlock_payment(payment: Payment):
-    """Create activation unlock records for unlock kind payments."""
+    """Create activation unlock records for unlock kind payments.
+    
+    Metadata structure:
+    {
+        'activation_type': 'exam' | 'interview' | 'account',
+        'exam_id': str (for CBT exams),
+        'subject_id': int (for interview subjects - legacy),
+        'selected_subject_ids': [1, 2, 3, 4] (for CBT exam subject selection - NEW)
+    }
+    """
     try:
         meta = None
         if payment.provider_reference:
@@ -547,14 +557,26 @@ def _handle_unlock_payment(payment: Payment):
             
             exam_identifier = activation.get('exam_id') if activation else None
             subject_id = activation.get('subject_id') if activation else None
+            selected_subject_ids = activation.get('selected_subject_ids', []) if activation else []
             
             if exam_identifier or subject_id:
-                ActivationUnlock.objects.get_or_create(
+                unlock, created = ActivationUnlock.objects.get_or_create(
                     user=payment.user,
                     exam_identifier=str(exam_identifier) if exam_identifier else None,
                     subject_id=int(subject_id) if subject_id else None,
                     defaults={'payment': payment}
                 )
+                
+                # For CBT exam unlocks: add selected subjects to M2M relationship (max 4)
+                if exam_identifier and selected_subject_ids and created:
+                    try:
+                        # Validate and limit to 4 subjects
+                        subject_ids = selected_subject_ids[:4] if isinstance(selected_subject_ids, list) else []
+                        subjects = Subject.objects.filter(id__in=subject_ids)
+                        unlock.selected_exam_subjects.set(subjects)
+                        logger.info(f"Added {len(subjects)} subjects to unlock {unlock.id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to set selected subjects for unlock {unlock.id}: {str(e)}")
             
             # Mark account unlocked if activation_type == 'account'
             activation_type = activation.get('activation_type') if activation else None

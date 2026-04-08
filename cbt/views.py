@@ -24,6 +24,7 @@ from .serializers import (
 )
 from .math_utils import format_math_question
 from users.permissions import IsMasterAdmin
+from courses.models import ActivationUnlock
 
 
 class StandardResultsSetPagination(PageNumberPagination):
@@ -450,6 +451,26 @@ class StartExamView(APIView):
         total_num_questions = 0
         all_selected_questions = []
         subjects_info = []
+        
+        # For multi-subject exams: verify student has selected these subjects in their unlock
+        if subjects_config and exam_id:
+            try:
+                unlock = ActivationUnlock.objects.get(user=request.user, exam_identifier=str(exam_id))
+                allowed_subject_ids = set(unlock.selected_exam_subjects.values_list('id', flat=True))
+                requested_subject_ids = set(cfg.get('subject_id') for cfg in subjects_config)
+                
+                # Check if all requested subjects are in allowed subjects
+                if not requested_subject_ids.issubset(allowed_subject_ids):
+                    unauthorized_subjects = requested_subject_ids - allowed_subject_ids
+                    return Response(
+                        {'detail': f'You do not have access to subjects with IDs: {list(unauthorized_subjects)}. Please unlock the exam with the correct subject selection.'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            except ActivationUnlock.DoesNotExist:
+                return Response(
+                    {'detail': 'You have not unlocked this exam. Please complete the activation payment first.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
         
         for subject_config in subjects_data:
             subject_id = subject_config.get('subject_id')
