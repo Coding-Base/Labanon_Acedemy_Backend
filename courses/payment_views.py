@@ -43,6 +43,53 @@ except Exception:
 logger = logging.getLogger(__name__)
 
 
+def get_activation_fee_for_exam(exam_id):
+    """
+    Helper function to find activation fee for an exam.
+    Tries to match by exam ID and exam slug for backward compatibility.
+    
+    Args:
+        exam_id: Exam ID or slug
+    
+    Returns:
+        ActivationFee object or None
+    """
+    if not exam_id:
+        return None
+    
+    try:
+        # Try to find fee matching exam identifier directly (legacy)
+        fee = ActivationFee.objects.filter(exam_identifier=str(exam_id)).order_by('-updated_at').first()
+        if fee:
+            return fee
+        
+        # If not found by ID, try to find the exam object and match by slug
+        from cbt.models import Exam as CBTExam
+        try:
+            # Try treating exam_id as an integer ID
+            exam_obj = CBTExam.objects.get(id=int(exam_id))
+            # Try matching by exam slug
+            fee = ActivationFee.objects.filter(exam_identifier=exam_obj.slug).order_by('-updated_at').first()
+            if fee:
+                return fee
+            # Also try treating the slug as the identifier
+            return ActivationFee.objects.filter(exam_identifier=exam_obj.slug).order_by('-updated_at').first()
+        except (CBTExam.DoesNotExist, ValueError):
+            # If that fails, try to get exam by slug
+            try:
+                exam_obj = CBTExam.objects.get(slug=str(exam_id))
+                # Try to match by exam ID or slug
+                fee = ActivationFee.objects.filter(exam_identifier=str(exam_obj.id)).order_by('-updated_at').first()
+                if fee:
+                    return fee
+                return ActivationFee.objects.filter(exam_identifier=exam_obj.slug).order_by('-updated_at').first()
+            except CBTExam.DoesNotExist:
+                return None
+    except Exception as e:
+        logger.error(f"Error finding activation fee for exam {exam_id}: {str(e)}")
+        return None
+
+
 class TrackPageView(APIView):
     permission_classes = [AllowAny]
 
@@ -590,7 +637,7 @@ class InitiatePaymentView(APIView):
                     elif subject_id:
                         fee = ActivationFee.objects.filter(type=ActivationFee.TYPE_INTERVIEW, subject_id=subject_id).order_by('-updated_at').first()
                     elif exam_id:
-                        fee = ActivationFee.objects.filter(exam_identifier=str(exam_id)).order_by('-updated_at').first()
+                        fee = get_activation_fee_for_exam(exam_id)
                     else:
                         fee = ActivationFee.objects.filter(type=ActivationFee.TYPE_EXAM).order_by('-updated_at').first()
                     if fee:
@@ -599,38 +646,6 @@ class InitiatePaymentView(APIView):
                     fee_currency = None
                 if not currency:
                     currency = (fee_currency or 'NGN').upper()
-            else:
-                if not currency:
-                    currency = getattr(settings, 'DEFAULT_CURRENCY', 'NGN').upper()
-            # Determine currency: frontend > activation fee (if any) > default
-            currency = (requested_currency or '').strip().upper() if requested_currency else None
-            if kind == Payment.KIND_UNLOCK:
-                # Try to fetch configured activation fee when not provided (repeat block handles role/account)
-                fee_currency = None
-                try:
-                    exam_id = request.data.get('exam_id') or request.data.get('item_id')
-                    subject_id = request.data.get('subject_id')
-                    activation_type = request.data.get('activation_type') or (request.data.get('activation') and request.data.get('activation').get('activation_type'))
-                    if activation_type == 'account':
-                        activation_role = request.data.get('activation_role') or (request.data.get('activation') and request.data.get('activation').get('role'))
-                        if activation_role:
-                            fee = ActivationFee.objects.filter(type=ActivationFee.TYPE_ACCOUNT, account_role=activation_role).order_by('-updated_at').first()
-                        else:
-                            fee = ActivationFee.objects.filter(type=ActivationFee.TYPE_ACCOUNT).order_by('-updated_at').first()
-                    elif subject_id:
-                        fee = ActivationFee.objects.filter(type=ActivationFee.TYPE_INTERVIEW, subject_id=subject_id).order_by('-updated_at').first()
-                    elif exam_id:
-                        fee = ActivationFee.objects.filter(exam_identifier=str(exam_id)).order_by('-updated_at').first()
-                    else:
-                        fee = ActivationFee.objects.filter(type=ActivationFee.TYPE_EXAM).order_by('-updated_at').first()
-                    if fee:
-                        fee_currency = fee.currency
-                except Exception:
-                    fee_currency = None
-                if not currency:
-                    currency = (fee_currency or 'NGN').upper()
-            else:
-                if not currency:
                     # default currency for payments
                     currency = getattr(settings, 'DEFAULT_CURRENCY', 'NGN').upper()
             # For activation payments platform receives full amount
@@ -938,7 +953,25 @@ class ActivationFeeView(APIView):
             if subject:
                 fee = ActivationFee.objects.filter(type=ActivationFee.TYPE_INTERVIEW, subject_id=subject).order_by('-updated_at').first()
             elif exam:
+                # Try to find fee matching exam identifier (try both ID and slug)
                 fee = ActivationFee.objects.filter(exam_identifier=str(exam)).order_by('-updated_at').first()
+                
+                # If not found by ID, try to find the exam by ID and then match by slug
+                if not fee:
+                    from cbt.models import Exam as CBTExam
+                    try:
+                        exam_obj = CBTExam.objects.get(id=exam)
+                        # Try matching by exam slug
+                        fee = ActivationFee.objects.filter(exam_identifier=exam_obj.slug).order_by('-updated_at').first()
+                    except (CBTExam.DoesNotExist, ValueError):
+                        # If that fails, try to get exam by slug
+                        try:
+                            exam_obj = CBTExam.objects.get(slug=exam)
+                            fee = ActivationFee.objects.filter(exam_identifier=str(exam_obj.id)).order_by('-updated_at').first()
+                            if not fee:
+                                fee = ActivationFee.objects.filter(exam_identifier=exam_obj.slug).order_by('-updated_at').first()
+                        except CBTExam.DoesNotExist:
+                            pass
             else:
                 if fee_type == ActivationFee.TYPE_ACCOUNT or fee_type == 'account':
                     if account_role:
@@ -1075,18 +1108,106 @@ class ActivationStatusView(APIView):
             
             if subject:
                 # Subject-specific unlock (interview/legacy path)
-                q = Q(user=user, subject_id=subject)
-                if exam:
-                    q = q | Q(user=user, exam_identifier=str(exam), selected_exam_subjects__id=subject)
-                unlocked = ActivationUnlock.objects.filter(q).exists()
+                # Support three cases:
+                # 1) Legacy exam unlock (ActivationUnlock exists for exam) -> full access to all exam subjects
+                # 2) Exam unlock with selected subjects -> check selected_exam_subjects M2M
+                # 3) Subject-specific unlock via subject_id (legacy interview)
+                try:
+                    # If exam param provided, first check for a matching ActivationUnlock for that exam
+                    if exam:
+                        from cbt.models import Exam as CBTExam
+
+                        # Try direct match by exam identifier
+                        unlock_qs = ActivationUnlock.objects.filter(user=user, exam_identifier=str(exam))
+                        exam_obj = None
+
+                        # If not found, try to resolve exam and match by slug or id
+                        if not unlock_qs.exists():
+                            try:
+                                exam_obj = CBTExam.objects.get(id=int(exam))
+                            except (ValueError, CBTExam.DoesNotExist):
+                                try:
+                                    exam_obj = CBTExam.objects.get(slug=str(exam))
+                                except CBTExam.DoesNotExist:
+                                    exam_obj = None
+
+                            if exam_obj:
+                                # Try matching ActivationUnlock by exam slug or numeric id string
+                                unlock_qs = ActivationUnlock.objects.filter(user=user, exam_identifier=str(exam_obj.id))
+                                if not unlock_qs.exists():
+                                    unlock_qs = ActivationUnlock.objects.filter(user=user, exam_identifier=exam_obj.slug)
+
+                        if unlock_qs.exists():
+                            # Found an activation record for this exam (legacy or new)
+                            unlock = unlock_qs.first()
+                            unlocked = True
+                            # If specific subjects were selected at purchase, return them; otherwise
+                            # legacy unlock grants access to all exam subjects
+                            if unlock.selected_exam_subjects.exists():
+                                allowed_subjects = list(unlock.selected_exam_subjects.values('id', 'name', 'exam_id'))
+                            else:
+                                # Legacy: return all exam subjects so frontend can treat them as allowed
+                                if not exam_obj:
+                                    try:
+                                        exam_obj = CBTExam.objects.get(id=int(exam))
+                                    except Exception:
+                                        try:
+                                            exam_obj = CBTExam.objects.get(slug=str(exam))
+                                        except Exception:
+                                            exam_obj = None
+                                if exam_obj:
+                                    allowed_subjects = list(exam_obj.subjects.values('id', 'name', 'exam_id'))
+                        else:
+                            # Fallback: check subject-specific unlocks (either interview subject or selected_exam_subjects contains the subject)
+                            q = Q(user=user, subject_id=subject) | Q(user=user, exam_identifier=str(exam), selected_exam_subjects__id=subject)
+                            unlocked = ActivationUnlock.objects.filter(q).exists()
+                            if unlocked:
+                                try:
+                                    unlock = ActivationUnlock.objects.filter(user=user, exam_identifier=str(exam), selected_exam_subjects__id=subject).first()
+                                    if unlock and unlock.selected_exam_subjects.exists():
+                                        allowed_subjects = list(unlock.selected_exam_subjects.values('id', 'name', 'exam_id'))
+                                except Exception:
+                                    pass
+                    else:
+                        # No exam provided: handle legacy interview-style subject unlocks
+                        unlocked = ActivationUnlock.objects.filter(user=user, subject_id=subject).exists()
+                except Exception as e:
+                    logger.error(f"Activation status check (subject) failed: {str(e)}")
+                    # Best-effort fallback to original query
+                    q = Q(user=user, subject_id=subject)
+                    if exam:
+                        q = q | Q(user=user, exam_identifier=str(exam), selected_exam_subjects__id=subject)
+                    unlocked = ActivationUnlock.objects.filter(q).exists()
             elif exam:
                 # Exam unlock: check if student has unlocked this exam
                 try:
-                    unlock = ActivationUnlock.objects.get(user=user, exam_identifier=str(exam))
-                    unlocked = True
-                    # Get list of allowed subjects for CBT flow
-                    allowed_subjects = list(unlock.selected_exam_subjects.values('id', 'name', 'exam_id'))
-                except ActivationUnlock.DoesNotExist:
+                    # Flexible matching: support exam identifier stored as slug or id
+                    from cbt.models import Exam as CBTExam
+
+                    unlock_qs = ActivationUnlock.objects.filter(user=user, exam_identifier=str(exam))
+                    exam_obj = None
+                    if not unlock_qs.exists():
+                        try:
+                            exam_obj = CBTExam.objects.get(id=int(exam))
+                        except (ValueError, CBTExam.DoesNotExist):
+                            try:
+                                exam_obj = CBTExam.objects.get(slug=str(exam))
+                            except CBTExam.DoesNotExist:
+                                exam_obj = None
+
+                        if exam_obj:
+                            unlock_qs = ActivationUnlock.objects.filter(user=user, exam_identifier=str(exam_obj.id))
+                            if not unlock_qs.exists():
+                                unlock_qs = ActivationUnlock.objects.filter(user=user, exam_identifier=exam_obj.slug)
+
+                    if unlock_qs.exists():
+                        unlock = unlock_qs.first()
+                        unlocked = True
+                        allowed_subjects = list(unlock.selected_exam_subjects.values('id', 'name', 'exam_id'))
+                    else:
+                        unlocked = False
+                except Exception as e:
+                    logger.error(f"Activation status check (exam) failed: {str(e)}")
                     unlocked = False
             else:
                 unlocked = False
@@ -1464,7 +1585,7 @@ class InitiateFlutterwavePaymentView(APIView):
                     if subject_id:
                         fee = ActivationFee.objects.filter(type=ActivationFee.TYPE_INTERVIEW, subject_id=subject_id).order_by('-updated_at').first()
                     elif exam_id:
-                        fee = ActivationFee.objects.filter(exam_identifier=str(exam_id)).order_by('-updated_at').first()
+                        fee = get_activation_fee_for_exam(exam_id)
                     else:
                         fee = ActivationFee.objects.filter(type='exam').order_by('-updated_at').first()
                     if fee:

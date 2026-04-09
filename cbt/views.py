@@ -459,16 +459,33 @@ class StartExamView(APIView):
                 allowed_subject_ids = set(unlock.selected_exam_subjects.values_list('id', flat=True))
                 requested_subject_ids = set(cfg.get('subject_id') for cfg in subjects_config)
                 
+                # PHASE 1: Backward Compatibility for Legacy Unlocks
+                # If unlock has no selected subjects (legacy/old unlock), allow access to ALL exam subjects
+                # This maintains compatibility with exams unlocked before the course selection feature
+                if not allowed_subject_ids:
+                    allowed_subject_ids = set(exam.subjects.values_list('id', flat=True))
+                
                 # Check if all requested subjects are in allowed subjects
                 if not requested_subject_ids.issubset(allowed_subject_ids):
                     unauthorized_subjects = requested_subject_ids - allowed_subject_ids
+                    # PHASE 3: Better error messages with available subjects
+                    allowed_subject_names = list(exam.subjects.filter(id__in=allowed_subject_ids).values_list('name', flat=True))
                     return Response(
-                        {'detail': f'You do not have access to subjects with IDs: {list(unauthorized_subjects)}. Please unlock the exam with the correct subject selection.'},
+                        {
+                            'detail': 'You do not have access to all requested subjects.',
+                            'available_subjects': allowed_subject_names,
+                            'message': f'You have unlocked access to: {", ".join(allowed_subject_names)}. Please select only from these subjects.',
+                            'action': 'Go back and reselect your subjects from the available options.'
+                        },
                         status=status.HTTP_403_FORBIDDEN
                     )
             except ActivationUnlock.DoesNotExist:
                 return Response(
-                    {'detail': 'You have not unlocked this exam. Please complete the activation payment first.'},
+                    {
+                        'detail': 'You have not unlocked this exam yet.',
+                        'action': 'Complete the activation payment to unlock this exam and select your subjects.',
+                        'next_step': 'Unlock Exam'
+                    },
                     status=status.HTTP_403_FORBIDDEN
                 )
         
