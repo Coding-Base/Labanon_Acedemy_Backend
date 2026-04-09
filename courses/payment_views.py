@@ -1094,6 +1094,7 @@ class ActivationStatusView(APIView):
     
     For exam unlocks: returns unlocked status and list of allowed subjects.
     For interview subjects: maintains legacy behavior.
+    Supports legacy global unlocks via user.is_unlocked flag.
     """
     permission_classes = [IsAuthenticated]
 
@@ -1105,6 +1106,33 @@ class ActivationStatusView(APIView):
             user = request.user
             unlocked = False
             allowed_subjects = []
+            
+            # LEGACY SUPPORT: Check if user has global account-level unlock.
+            # This preserves access for users who unlocked before per-exam subject selection was introduced.
+            if getattr(user, 'is_unlocked', False):
+                unlocked = True
+                # If exam is requested, return all exam subjects for backward compatibility
+                if exam:
+                    try:
+                        from cbt.models import Exam as CBTExam
+                        exam_obj = None
+                        try:
+                            exam_obj = CBTExam.objects.get(id=int(exam))
+                        except (ValueError, CBTExam.DoesNotExist):
+                            try:
+                                exam_obj = CBTExam.objects.get(slug=str(exam))
+                            except CBTExam.DoesNotExist:
+                                exam_obj = None
+                        
+                        if exam_obj:
+                            allowed_subjects = list(exam_obj.subjects.values('id', 'name', 'exam_id'))
+                    except Exception as e:
+                        logger.exception(f"Failed to fetch exam subjects for legacy unlocked user: {str(e)}")
+                
+                response_data = {'unlocked': True}
+                if allowed_subjects:
+                    response_data['allowed_subjects'] = allowed_subjects
+                return Response(response_data, status=status.HTTP_200_OK)
             
             if subject:
                 # Subject-specific unlock (interview/legacy path)
