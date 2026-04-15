@@ -37,6 +37,7 @@ urlpatterns = [
     path('api/promos/', include('promos.urls')),
     path('api/subadmin/', include('subadmin.urls')),
     path('api/messages/', include('messaging.urls')),
+    path('api/mock-exams/', include('mock_exams.urls')),
     path('api/auth/', include('djoser.urls')),
     path('api/auth/', include('djoser.urls.jwt')),
     # Server-rendered blog detail (for crawlers / SEO)
