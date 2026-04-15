@@ -1,0 +1,341 @@
+{% load static %}
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Your Material is Ready</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%);
+            padding: 20px;
+            min-height: 100vh;
+        }
+        
+        .email-container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+        }
+        
+        /* Header with gradient */
+        .header {
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+            padding: 40px 20px;
+            text-align: center;
+            color: white;
+        }
+        
+        .header h1 {
+            font-size: 24px;
+            margin-bottom: 10px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+        
+        .header p {
+            font-size: 14px;
+            opacity: 0.95;
+            font-weight: 300;
+        }
+        
+        /* Main Content */
+        .content {
+            padding: 40px 30px;
+        }
+        
+        .greeting {
+            font-size: 16px;
+            color: #1f2937;
+            margin-bottom: 20px;
+            line-height: 1.6;
+        }
+        
+        .greeting strong {
+            color: #d97706;
+        }
+        
+        /* Material Info Card */
+        .material-card {
+            background: linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+            border-left: 4px solid #f59e0b;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 30px 0;
+        }
+        
+        .material-card h3 {
+            color: #1f2937;
+            margin-bottom: 8px;
+            font-size: 16px;
+            font-weight: 600;
+        }
+        
+        .material-card p {
+            color: #6b7280;
+            font-size: 13px;
+            margin: 6px 0;
+            line-height: 1.5;
+        }
+        
+        /* CTA Button */
+        .cta-section {
+            text-align: center;
+            margin: 30px 0;
+        }
+        
+        .download-btn {
+            display: inline-block;
+            background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+            color: white;
+            padding: 14px 40px;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 16px;
+            transition: transform 0.2s, box-shadow 0.2s;
+            box-shadow: 0 4px 15px rgba(245, 158, 11, 0.3);
+            display: inline-block;
+            border: none;
+            cursor: pointer;
+        }
+        
+        .download-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(245, 158, 11, 0.4);
+        }
+        
+        /* Expiry Warning */
+        .expiry-notice {
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            border-radius: 6px;
+            padding: 12px 15px;
+            margin: 20px 0;
+            font-size: 13px;
+            color: #991b1b;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .expiry-notice .icon {
+            font-size: 18px;
+        }
+        
+        /* Details Section */
+        .details {
+            margin: 25px 0;
+            padding: 15px 0;
+            border-top: 1px solid #e5e7eb;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 10px 0;
+            font-size: 13px;
+        }
+        
+        .detail-label {
+            color: #6b7280;
+            font-weight: 600;
+        }
+        
+        .detail-value {
+            color: #1f2937;
+            font-weight: 500;
+        }
+        
+        /* Help Section */
+        .help-section {
+            font-size: 13px;
+            color: #6b7280;
+            margin-top: 20px;
+            line-height: 1.6;
+            padding: 15px;
+            background: #f9fafb;
+            border-radius: 6px;
+        }
+        
+        .help-section strong {
+            color: #1f2937;
+        }
+        
+        .help-section a {
+            color: #f59e0b;
+            text-decoration: none;
+            font-weight: 600;
+        }
+        
+        .help-section a:hover {
+            text-decoration: underline;
+        }
+        
+        /* Footer */
+        .footer {
+            background: #f9fafb;
+            padding: 20px 30px;
+            border-top: 1px solid #e5e7eb;
+            text-align: center;
+            color: #6b7280;
+            font-size: 12px;
+        }
+        
+        .footer a {
+            color: #f59e0b;
+            text-decoration: none;
+            font-weight: 600;
+        }
+        
+        .footer a:hover {
+            text-decoration: underline;
+        }
+        
+        .footer-divider {
+            margin: 15px 0;
+            color: #d1d5db;
+        }
+        
+        .footer-links {
+            margin-top: 12px;
+        }
+        
+        .footer-links a {
+            margin: 0 10px;
+        }
+        
+        /* Responsive */
+        @media (max-width: 600px) {
+            .email-container {
+                border-radius: 0;
+            }
+            
+            .content {
+                padding: 30px 20px;
+            }
+            
+            .header {
+                padding: 30px 20px;
+            }
+            
+            .header h1 {
+                font-size: 20px;
+            }
+            
+            .download-btn {
+                width: 100%;
+                padding: 16px 20px;
+            }
+            
+            .detail-row {
+                flex-direction: column;
+            }
+            
+            .detail-label {
+                margin-bottom: 4px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        
+        <!-- Header -->
+        <div class="header">
+            <h1>📥 Your Material is Ready!</h1>
+            <p>Download your requested study material</p>
+        </div>
+        
+        <!-- Content -->
+        <div class="content">
+            
+            <!-- Greeting -->
+            <div class="greeting">
+                Hi <strong>{{ user_name }}</strong>,<br>
+                Your material is ready to download. Click the button below to get started!
+            </div>
+            
+            <!-- Material Info Card -->
+            <div class="material-card">
+                <h3>📚 {{ material_name }}</h3>
+                <p><strong>Type:</strong> Educational Material</p>
+                <p><strong>Download:</strong> Secure & Direct</p>
+                <p>Access begins immediately. Enjoy your learning!</p>
+            </div>
+            
+            <!-- Download Button -->
+            <div class="cta-section">
+                <a href="{{ download_url }}" class="download-btn">
+                    ⬇️ Download Material Now
+                </a>
+            </div>
+            
+            <!-- Expiry Warning -->
+            <div class="expiry-notice">
+                <div class="icon">⏰</div>
+                <div>
+                    <strong>Link Expires:</strong> {{ expires_at|date:"M d, Y H:i" }} (24 hours from now)
+                </div>
+            </div>
+            
+            <!-- Details Section -->
+            <div class="details">
+                <div class="detail-row">
+                    <span class="detail-label">Sent on:</span>
+                    <span class="detail-value">{{ current_date|date:"M d, Y H:i" }}</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Link Duration:</span>
+                    <span class="detail-value">24 hours</span>
+                </div>
+                <div class="detail-row">
+                    <span class="detail-label">Download Times:</span>
+                    <span class="detail-value">Unlimited within 24 hours</span>
+                </div>
+            </div>
+            
+            <!-- Help Section -->
+            <div class="help-section">
+                <strong>💡 Need Help?</strong><br>
+                If you don't see the download button or the link isn't working, 
+                you can also visit your account to re-download this material anytime.
+                <br><a href="{{ platform_url }}/materials" style="margin-top: 8px; display: inline-block;">Visit Your Materials</a>
+            </div>
+            
+        </div>
+        
+        <!-- Footer -->
+        <div class="footer">
+            <p style="margin-bottom: 10px;">
+                Download from <strong>Light Hub Academy</strong>
+            </p>
+            <div class="footer-links">
+                <a href="{{ platform_url }}">Visit Platform</a>
+                <span style="color: #d1d5db;">|</span>
+                <a href="mailto:{{ support_email }}">Support</a>
+            </div>
+            <div class="footer-divider">━━━━━━━━━━━━━━━━━━━━━━━━━━</div>
+            <p>
+                © 2026 Light Hub Academy. All rights reserved.<br>
+                <span style="font-size: 11px;">
+                    This email was sent because you requested to download a material.
+                    <a href="{{ platform_url }}/unsubscribe">Manage preferences</a>
+                </span>
+            </p>
+        </div>
+        
+    </div>
+</body>
+</html>

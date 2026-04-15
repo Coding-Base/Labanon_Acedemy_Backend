@@ -209,11 +209,13 @@ class Payment(models.Model):
     KIND_COURSE = 'course'
     KIND_DIPLOMA = 'diploma'
     KIND_UNLOCK = 'unlock'
+    KIND_MATERIAL = 'material'
 
     KIND_CHOICES = [
         (KIND_COURSE, 'Course Purchase'),
         (KIND_DIPLOMA, 'Diploma Enrollment'),
         (KIND_UNLOCK, 'Account Unlock'),
+        (KIND_MATERIAL, 'Material Purchase'),
     ]
 
     # Payment provider choices

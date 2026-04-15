@@ -33,6 +33,7 @@ INSTALLED_APPS = [
     'cloudinary_storage' if os.environ.get('USE_CLOUDINARY', 'False').lower() in ('1', 'true', 'yes') else None,
     'users',
     'courses',
+    'materials',
     'cbt',
     'videos',
     'blog',
@@ -307,6 +308,29 @@ else:
     CLOUDFRONT_DOMAIN = None
     CLOUDFRONT_PRIVATE_KEY_PATH = None
 
+# If USE_AWS_S3 is enabled and Cloudinary is not used, make S3 the
+# default storage backend for media files. This preserves the existing
+# Cloudinary and filesystem behavior unless USE_AWS_S3 is explicitly set.
+if USE_AWS_S3 and not USE_CLOUDINARY:
+    # Use django-storages S3 backend
+    DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+
+    # Ensure AWS_LOCATION is defined (defaults to 'media' above)
+    try:
+        AWS_LOCATION
+    except NameError:
+        AWS_LOCATION = 'media'
+
+    # Prefer CloudFront domain if provided, otherwise fall back to bucket URL
+    if AWS_S3_CUSTOM_DOMAIN:
+        MEDIA_URL = f"https://{AWS_S3_CUSTOM_DOMAIN}/{AWS_LOCATION}/"
+    elif CLOUDFRONT_DOMAIN:
+        MEDIA_URL = f"https://{CLOUDFRONT_DOMAIN}/{AWS_LOCATION}/"
+    elif AWS_STORAGE_BUCKET_NAME:
+        MEDIA_URL = f"https://{AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com/{AWS_LOCATION}/"
+    else:
+        # Keep the filesystem MEDIA_URL as a safe default
+        MEDIA_URL = MEDIA_URL
 # ==================== Payments ====================
 PAYSTACK_SECRET_KEY = os.environ.get('PAYSTACK_SECRET_KEY')
 PAYSTACK_PUBLIC_KEY = os.environ.get('PAYSTACK_PUBLIC_KEY')

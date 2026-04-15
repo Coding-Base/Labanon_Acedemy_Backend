@@ -31,6 +31,7 @@ urlpatterns = [
     # Compatibility mount: some frontend code historically requested under /api/courses/
     # Expose the same `courses` app routes at /api/courses/ to avoid 404s from older clients.
     path('api/courses/', include('courses.urls')),
+    path('api/materials/', include('materials.urls')),
     path('api/cbt/', include('cbt.urls')),
     path('api/videos/', include('videos.urls')),
     path('api/blog/', include('blog.urls')),
