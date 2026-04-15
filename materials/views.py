@@ -175,13 +175,37 @@ class MaterialViewSet(viewsets.ModelViewSet):
         """
         Generate expiring download link and send via email.
         Updates download count and records download activity.
+        
+        If user is not authenticated, returns 401 and frontend redirects to sign-in.
         """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Check if user is authenticated
+        if not request.user or not request.user.is_authenticated:
+            logger.warning(f"[MATERIAL-DOWNLOAD] Unauthenticated access attempt to material {pk}")
+            return Response(
+                {'error': 'User not authenticated', 'unauthenticated': True},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
         material = self.get_object()
         user = request.user
         
+        logger.info(f"[MATERIAL-DOWNLOAD] User {user.id} ({user.email}) requesting download of material {material.id}")
+        logger.info(f"[MATERIAL-DOWNLOAD] Material price: {material.price}, is_free: {material.is_free}")
+        
         # Check if user has access
         if material.price > 0:  # Paid material
-            if not MaterialPurchase.objects.filter(user=user, material=material).exists():
+            purchase_exists = MaterialPurchase.objects.filter(user=user, material=material).exists()
+            logger.info(f"[MATERIAL-DOWNLOAD] Checking MaterialPurchase: user={user.id}, material={material.id}, exists={purchase_exists}")
+            
+            # Debug: count all purchases for this material
+            all_purchases = MaterialPurchase.objects.filter(material=material).count()
+            logger.info(f"[MATERIAL-DOWNLOAD] Total MaterialPurchase records for material {material.id}: {all_purchases}")
+            
+            if not purchase_exists:
+                logger.error(f"[MATERIAL-DOWNLOAD] 403 : User {user.id} has no MaterialPurchase for material {material.id}")
                 return Response(
                     {'error': 'You need to purchase this material first'},
                     status=status.HTTP_403_FORBIDDEN
@@ -219,7 +243,11 @@ class MaterialViewSet(viewsets.ModelViewSet):
         purchase.save(update_fields=['download_count', 'last_downloaded_at'])
         
         # Send email asynchronously; if the broker is down, fall back to synchronous send
+        email_sent = False
+        email_error = None
+        
         try:
+            # Try async send via Celery
             send_download_email.delay(
                 user_email=user.email,
                 user_name=user.first_name or user.email.split('@')[0],
@@ -227,26 +255,92 @@ class MaterialViewSet(viewsets.ModelViewSet):
                 download_url=download_url,
                 expires_at=expires_at.isoformat()
             )
+            email_sent = True
+            print(f"✓ Email task queued for {user.email}")
         except Exception as e:
             # Broker not available (e.g., RabbitMQ/Redis). Log and send synchronously.
-            print(f"Celery broker unavailable, sending email synchronously: {str(e)}")
+            print(f"⚠ Celery broker unavailable, attempting synchronous send: {str(e)}")
             try:
-                send_download_email(
+                result = send_download_email(
                     user_email=user.email,
                     user_name=user.first_name or user.email.split('@')[0],
                     material_name=material.name,
                     download_url=download_url,
                     expires_at=expires_at.isoformat()
                 )
+                email_sent = True
+                print(f"✓ Email sent synchronously to {user.email}")
             except Exception as e2:
-                print(f"Failed to send download email synchronously: {str(e2)}")
+                email_error = str(e2)
+                print(f"✗ Failed to send download email: {email_error}")
         
         return Response({
             'download_url': download_url,
             'expires_at': expires_at,
             'token': download_token,
-            'message': 'Download link generated and sent to your email. Link expires in 24 hours.'
-        }, status=status.HTTP_200_OK)
+            'email_sent': email_sent,
+            'email_error': email_error,
+            'message': 'Download link generated and sent to your email. Link expires in 24 hours.' if email_sent else 'Download link generated but email failed to send.'
+        }, status=status.HTTP_200_OK if email_sent else status.HTTP_206_PARTIAL_CONTENT)
+
+        @action(detail=True, methods=['post'], permission_classes=[permissions.AllowAny])
+        def request_download_email(self, request, pk=None):
+            """
+            Public endpoint to request a download link be emailed to an address.
+            Intended for free materials or pre-registration flows where the user is not yet authenticated.
+            Only allowed for free materials.
+            """
+            material = self.get_object()
+            email = request.data.get('email') or request.query_params.get('email')
+
+            if not email:
+                return Response({'error': 'Email address required'}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Only allow public requests for free materials
+            if not material.is_free:
+                return Response({'error': 'Cannot request download for paid materials without purchase'}, status=status.HTTP_403_FORBIDDEN)
+
+            # Generate a temporary signed URL (24 hours)
+            expires_at = now() + timedelta(hours=24)
+            download_url = self.generate_signed_url(material, expires_at)
+
+            email_sent = False
+            email_error = None
+
+            try:
+                # Try async task
+                send_download_email.delay(
+                    user_email=email,
+                    user_name=(email.split('@')[0] if email else 'User'),
+                    material_name=material.name,
+                    download_url=download_url,
+                    expires_at=expires_at.isoformat()
+                )
+                email_sent = True
+                print(f"✓ Email task queued for {email} (public request)")
+            except Exception as e:
+                print(f"⚠ Celery broker unavailable for public request: {str(e)}")
+                try:
+                    send_download_email(
+                        user_email=email,
+                        user_name=(email.split('@')[0] if email else 'User'),
+                        material_name=material.name,
+                        download_url=download_url,
+                        expires_at=expires_at.isoformat()
+                    )
+                    email_sent = True
+                    print(f"✓ Email sent synchronously to {email} (public request)")
+                except Exception as e2:
+                    email_error = str(e2)
+                    print(f"✗ Failed to send public download email: {email_error}")
+
+            return Response({
+                'download_url': download_url,
+                'expires_at': expires_at,
+                'email_sent': email_sent,
+                'email_error': email_error,
+                'message': 'Download link emailed' if email_sent else 'Failed to email download link'
+            }, status=status.HTTP_200_OK if email_sent else status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @action(detail=False, methods=['get'], permission_classes=[permissions.IsAuthenticated])
     def my_downloads(self, request):
@@ -356,31 +450,85 @@ class MaterialViewSet(viewsets.ModelViewSet):
         
         return Response(activities[:20], status=status.HTTP_200_OK)
     
+    @action(detail=False, methods=['get'], permission_classes=[permissions.IsAdminUser])
+    def email_diagnosis(self, request):
+        """
+        Admin endpoint to diagnose email configuration issues.
+        Helps troubleshoot why materials download emails aren't being sent.
+        """
+        from .utils import check_email_configuration, get_email_status_text
+        
+        report = check_email_configuration()
+        
+        return Response({
+            'email_configuration': report,
+            'status_text': get_email_status_text(),
+            'backend_is_mailjet': 'mailjet' in report['email_backend'].lower(),
+            'backend_is_console': 'console' in report['email_backend'].lower(),
+            'is_properly_configured': report['is_configured'] and not report['issues'],
+            'note': 'If using console backend, emails are printed to Django console/logs. For production, configure Mailjet or SMTP.'
+        }, status=status.HTTP_200_OK)
+    
     @staticmethod
     def generate_signed_url(material, expires_at):
         """
         Generate CloudFront signed URL for S3-hosted file.
         For Google Drive links, returns the link as-is.
+        
+        Fallback chain: CloudFront (optional) → boto3 S3 presigned → direct URL
         """
         if material.file_source == 'gdrive':
             return material.gdrive_link
+        
         # For S3 uploads, try CloudFront signed URL first, then S3 presigned URL via boto3, then fallback
-        # 1) CloudFront
-        try:
-            from django_cloudfront_signed_urls import CloudFrontSigner
+        # 1) CloudFront (optional - module may not be installed)
+        cloudfront_key_id = os.environ.get('CLOUDFRONT_KEY_ID')
+        cloudfront_key_path = os.environ.get('CLOUDFRONT_PRIVATE_KEY_PATH')
+        
+        if cloudfront_key_id and cloudfront_key_path:
+            # Prefer botocore's built-in CloudFrontSigner (no extra PyPI package required)
+            try:
+                from botocore.signers import CloudFrontSigner
+                from cryptography.hazmat.primitives import hashes, serialization
+                from cryptography.hazmat.primitives.asymmetric import padding
 
-            signer = CloudFrontSigner(
-                key_id=os.environ.get('CLOUDFRONT_KEY_ID'),
-                private_key=open(os.environ.get('CLOUDFRONT_PRIVATE_KEY_PATH')).read()
-            )
+                # Load private key bytes
+                with open(cloudfront_key_path, 'rb') as f:
+                    private_key_bytes = f.read()
 
-            url = signer.generate_presigned_url(
-                url=material.file_url,
-                expire_time=int(expires_at.timestamp())
-            )
-            return url
-        except Exception as e:
-            print(f"Error generating signed URL (CloudFront): {str(e)}")
+                private_key = serialization.load_pem_private_key(private_key_bytes, password=None)
+
+                def _rsa_signer(message: bytes) -> bytes:
+                    return private_key.sign(message, padding.PKCS1v15(), hashes.SHA1())
+
+                signer = CloudFrontSigner(cloudfront_key_id, _rsa_signer)
+
+                # botocore expects a datetime for the expiration
+                url = signer.generate_presigned_url(material.file_url, date_less_than=expires_at)
+                print(f"✓ Generated CloudFront signed URL for {material.name} using botocore")
+                return url
+            except ImportError:
+                # botocore or cryptography not available; try the previous package name
+                try:
+                    from django_cloudfront_signed_urls import CloudFrontSigner
+
+                    signer = CloudFrontSigner(
+                        key_id=cloudfront_key_id,
+                        private_key=open(cloudfront_key_path).read()
+                    )
+
+                    url = signer.generate_presigned_url(
+                        url=material.file_url,
+                        expire_time=int(expires_at.timestamp())
+                    )
+                    print(f"✓ Generated CloudFront signed URL for {material.name} using django_cloudfront_signed_urls")
+                    return url
+                except Exception:
+                    print(f"⚠ CloudFront signing package not installed. Falling back to boto3 S3 presigned URL.")
+            except Exception as e:
+                print(f"⚠ CloudFront signing failed: {str(e)}. Falling back to boto3 S3 presigned URL.")
+        else:
+            print(f"ℹ CloudFront configuration not set. Using S3 presigned URL fallback.")
 
         # 2) Try boto3 S3 presigned URL (if file_url points to S3)
         try:

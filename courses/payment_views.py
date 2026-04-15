@@ -25,6 +25,7 @@ from .models import (
     Payment, Course, Diploma, Enrollment, DiplomaEnrollment,
     PaystackSubAccount, FlutterwaveSubAccount, ActivationFee, ActivationUnlock
 )
+from materials.models import Material, MaterialPurchase
 from .models import Visit
 from .serializers import VisitSerializer
 from django.db.models import Count
@@ -604,6 +605,10 @@ class InitiatePaymentView(APIView):
             if item_type == 'course':
                 item = Course.objects.get(id=item_id)
                 kind = Payment.KIND_COURSE
+            elif item_type == 'material':
+                # Materials are one-off digital purchases; all revenue goes to the platform
+                item = Material.objects.get(id=item_id)
+                kind = Payment.KIND_MATERIAL
             elif item_type == 'diploma':
                 item = Diploma.objects.get(id=item_id)
                 kind = Payment.KIND_DIPLOMA
@@ -648,8 +653,8 @@ class InitiatePaymentView(APIView):
                     currency = (fee_currency or 'NGN').upper()
                     # default currency for payments
                     currency = getattr(settings, 'DEFAULT_CURRENCY', 'NGN').upper()
-            # For activation payments platform receives full amount
-            if kind == Payment.KIND_UNLOCK:
+            # For activation payments and material purchases platform receives full amount
+            if kind in (Payment.KIND_UNLOCK, Payment.KIND_MATERIAL):
                 platform_fee = amount_decimal
                 creator_amount = Decimal('0.00')
             else:
@@ -699,6 +704,12 @@ class InitiatePaymentView(APIView):
 
             if item_type == 'course':
                 payment_data['course'] = item
+            elif item_type == 'material':
+                # No direct FK on Payment for Material; persist material id for linking after verification
+                try:
+                    payment_data['provider_reference'] = json.dumps({'material_id': str(item.id)})
+                except Exception:
+                    payment_data['provider_reference'] = str(item.id)
             elif item_type == 'diploma':
                 payment_data['diploma'] = item
             elif item_type == 'activation':
@@ -846,6 +857,56 @@ class VerifyPaymentView(APIView):
                                     diploma=payment.diploma,
                                     defaults={'purchased': True, 'purchased_at': timezone.now()}
                                 )
+                            elif payment.kind == Payment.KIND_MATERIAL:
+                                # Grant access to material for the paying user
+                                try:
+                                    mat_id = None
+                                    # Prefer provider_reference payload if present
+                                    if payment.provider_reference:
+                                        try:
+                                            prov = json.loads(payment.provider_reference)
+                                            if isinstance(prov, dict):
+                                                mat_id = prov.get('material_id') or prov.get('item_id')
+                                            logger.info(f"[PAYMENT-DEBUG] Extracted material_id from provider_reference: {mat_id}")
+                                        except Exception as json_err:
+                                            logger.error(f"[PAYMENT-DEBUG] Failed to parse provider_reference JSON: {str(json_err)}")
+                                            mat_id = None
+
+                                    # Fallback to transaction metadata
+                                    if not mat_id:
+                                        tx_meta = transaction_data.get('metadata') or {}
+                                        mat_id = tx_meta.get('item_id') or tx_meta.get('material_id')
+                                        logger.info(f"[PAYMENT-DEBUG] Extracted material_id from metadata: {mat_id}")
+
+                                    if mat_id:
+                                        try:
+                                            # Ensure mat_id is a valid UUID string
+                                            import uuid as uuid_module
+                                            try:
+                                                # Convert string to UUID if needed
+                                                mat_id_uuid = uuid_module.UUID(str(mat_id)) if isinstance(mat_id, str) else mat_id
+                                                logger.info(f"[PAYMENT-DEBUG] Looking up Material with UUID: {mat_id_uuid}")
+                                            except (ValueError, TypeError):
+                                                logger.error(f"[PAYMENT-DEBUG] Invalid UUID format for material: {mat_id}")
+                                                raise ValueError(f"Invalid material UUID: {mat_id}")
+                                            
+                                            material_obj = Material.objects.get(id=mat_id_uuid)
+                                            logger.info(f"[PAYMENT-DEBUG] Found Material: {material_obj.name} (id={material_obj.id})")
+                                            
+                                            purchase, created = MaterialPurchase.objects.update_or_create(
+                                                user=payment.user,
+                                                material=material_obj,
+                                                defaults={'payment': payment, 'accessed_at': timezone.now()}
+                                            )
+                                            logger.info(f"[PAYMENT-DEBUG] MaterialPurchase {'created' if created else 'updated'}: {purchase.id}")
+                                        except Material.DoesNotExist:
+                                            logger.error(f"[PAYMENT-DEBUG] Material with id {mat_id} not found when finalizing payment {payment.id}")
+                                        except Exception as mat_err:
+                                            logger.error(f"[PAYMENT-DEBUG] Error creating MaterialPurchase for material {mat_id}: {str(mat_err)}", exc_info=True)
+                                    else:
+                                        logger.error(f"[PAYMENT-DEBUG] No material_id found in provider_reference or metadata for payment {payment.id}")
+                                except Exception as e:
+                                    logger.error(f"[PAYMENT-DEBUG] Failed to create MaterialPurchase for Payment {payment.id}: {str(e)}", exc_info=True)
                             # Activation unlocks are handled below using provider transaction metadata
                             elif payment.kind == Payment.KIND_UNLOCK:
                                 # Create ActivationUnlock record based on provider metadata
