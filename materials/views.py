@@ -93,33 +93,51 @@ class MaterialViewSet(viewsets.ModelViewSet):
             )
         
         try:
+            # Prefer Cloudinary when configured (good for thumbnails)
+            use_cloudinary = os.environ.get('USE_CLOUDINARY', 'False').lower() in ('1', 'true', 'yes')
+            if use_cloudinary:
+                try:
+                    import cloudinary.uploader
+
+                    # Upload to Cloudinary and return secure URL
+                    upload_result = cloudinary.uploader.upload(file, folder='materials_thumbs')
+                    file_url = upload_result.get('secure_url') or upload_result.get('url')
+
+                    return Response({
+                        'file_url': file_url,
+                        'file_name': file.name,
+                        'file_size': file.size,
+                        'message': 'File uploaded to Cloudinary successfully'
+                    }, status=status.HTTP_200_OK)
+                except Exception as ce:
+                    # If Cloudinary fails, fall back to default storage
+                    print(f"⚠ Cloudinary upload failed: {str(ce)}. Falling back to default storage.")
+
             # Import storage backend
             from django.core.files.storage import default_storage
-            
+
             # Generate unique filename
             file_ext = os.path.splitext(file.name)[1]
             unique_name = f"materials/{uuid.uuid4()}{file_ext}"
-            
-            # Save to S3
+
+            # Save to default storage (S3/local)
             file_path = default_storage.save(unique_name, file)
             file_url = default_storage.url(file_path)
 
             # Ensure returned URL is absolute (DRF URLField expects a full URL)
-            # default_storage.url() may return a relative path like '/media/..'
             if file_url and file_url.startswith('/'):
                 try:
                     file_url = request.build_absolute_uri(file_url)
                 except Exception:
-                    # Fallback: leave as-is if build_absolute_uri is unavailable
                     pass
-            
+
             return Response({
                 'file_url': file_url,
                 'file_name': file.name,
                 'file_size': file.size,
                 'message': 'File uploaded successfully'
             }, status=status.HTTP_200_OK)
-        
+
         except Exception as e:
             return Response(
                 {'error': f'Upload failed: {str(e)}'},
@@ -242,13 +260,11 @@ class MaterialViewSet(viewsets.ModelViewSet):
         purchase.last_downloaded_at = now()
         purchase.save(update_fields=['download_count', 'last_downloaded_at'])
         
-        # Send email asynchronously; if the broker is down, fall back to synchronous send
+        # Send email synchronously (immediate delivery requested)
         email_sent = False
         email_error = None
-        
         try:
-            # Try async send via Celery
-            send_download_email.delay(
+            send_download_email(
                 user_email=user.email,
                 user_name=user.first_name or user.email.split('@')[0],
                 material_name=material.name,
@@ -256,23 +272,10 @@ class MaterialViewSet(viewsets.ModelViewSet):
                 expires_at=expires_at.isoformat()
             )
             email_sent = True
-            print(f"✓ Email task queued for {user.email}")
+            print(f"✓ Email sent synchronously to {user.email}")
         except Exception as e:
-            # Broker not available (e.g., RabbitMQ/Redis). Log and send synchronously.
-            print(f"⚠ Celery broker unavailable, attempting synchronous send: {str(e)}")
-            try:
-                result = send_download_email(
-                    user_email=user.email,
-                    user_name=user.first_name or user.email.split('@')[0],
-                    material_name=material.name,
-                    download_url=download_url,
-                    expires_at=expires_at.isoformat()
-                )
-                email_sent = True
-                print(f"✓ Email sent synchronously to {user.email}")
-            except Exception as e2:
-                email_error = str(e2)
-                print(f"✗ Failed to send download email: {email_error}")
+            email_error = str(e)
+            print(f"✗ Failed to send download email synchronously: {email_error}")
         
         return Response({
             'download_url': download_url,
@@ -308,8 +311,8 @@ class MaterialViewSet(viewsets.ModelViewSet):
             email_error = None
 
             try:
-                # Try async task
-                send_download_email.delay(
+                # Send synchronously to provide immediate delivery
+                send_download_email(
                     user_email=email,
                     user_name=(email.split('@')[0] if email else 'User'),
                     material_name=material.name,
@@ -317,22 +320,10 @@ class MaterialViewSet(viewsets.ModelViewSet):
                     expires_at=expires_at.isoformat()
                 )
                 email_sent = True
-                print(f"✓ Email task queued for {email} (public request)")
+                print(f"✓ Email sent synchronously to {email} (public request)")
             except Exception as e:
-                print(f"⚠ Celery broker unavailable for public request: {str(e)}")
-                try:
-                    send_download_email(
-                        user_email=email,
-                        user_name=(email.split('@')[0] if email else 'User'),
-                        material_name=material.name,
-                        download_url=download_url,
-                        expires_at=expires_at.isoformat()
-                    )
-                    email_sent = True
-                    print(f"✓ Email sent synchronously to {email} (public request)")
-                except Exception as e2:
-                    email_error = str(e2)
-                    print(f"✗ Failed to send public download email: {email_error}")
+                email_error = str(e)
+                print(f"✗ Failed to send public download email synchronously: {email_error}")
 
             return Response({
                 'download_url': download_url,
