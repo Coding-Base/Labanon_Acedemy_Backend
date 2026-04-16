@@ -96,6 +96,9 @@ urlpatterns = [
     # Admin verification actions
     path('admin/institutions/verify/approve/', ApproveInstitutionVerificationView.as_view(), name='approve-institution-verification'),
     path('admin/institutions/verify/reject/', RejectInstitutionVerificationView.as_view(), name='reject-institution-verification'),
+
+    # Direct mapping for diploma enrollment form submission to ensure POST is allowed
+    path('diploma-enrollments/submit-enrollment-info/', DiplomaEnrollmentViewSet.as_view({'post': 'submit_enrollment_info'}), name='diploma-enrollments-submit-enrollment-info'),
     
     # Unified verification submission approval/rejection (handles both tutors and institutions)
     path('admin/verify-submission/<int:submission_id>/approve/', UnifiedVerificationApprovalView.as_view(), name='verify-submission-approve'),

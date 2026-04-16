@@ -648,7 +648,7 @@ class ActivationFee(models.Model):
 class ActivationUnlock(models.Model):
     """Records which users have unlocked specific exams or interview subjects via payment.
     
-    For exam unlocks: stores up to 4 selected subjects via the selected_exam_subjects M2M.
+    For exam unlocks: stores up to 5 selected subjects via the selected_exam_subjects M2M.
     For interview subject unlocks: uses the legacy subject_id field.
     """
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='activations')
@@ -657,8 +657,8 @@ class ActivationUnlock(models.Model):
     payment = models.ForeignKey(Payment, on_delete=models.SET_NULL, null=True, blank=True, related_name='activations')
     activated_at = models.DateTimeField(auto_now_add=True)
     
-    # For CBT exam unlocks: store selected subjects (max 4)
-    selected_exam_subjects = models.ManyToManyField('cbt.Subject', blank=True, related_name='student_unlocks', help_text='Selected subjects for CBT exam (max 4)')
+    # For CBT exam unlocks: store selected subjects (max 5)
+    selected_exam_subjects = models.ManyToManyField('cbt.Subject', blank=True, related_name='student_unlocks', help_text='Selected subjects for CBT exam (max 5)')
 
     class Meta:
         unique_together = (('user', 'exam_identifier'),)  # One unlock per user per exam (subjects tracked in M2M)
@@ -668,9 +668,9 @@ class ActivationUnlock(models.Model):
         ]
 
     def clean(self):
-        """Validate max 4 subjects selected for exam unlocks."""
-        if self.exam_identifier and self.selected_exam_subjects.count() > 4:
-            raise ValueError('Maximum 4 subjects can be selected for an exam unlock')
+        """Validate max 5 subjects selected for exam unlocks."""
+        if self.exam_identifier and self.selected_exam_subjects.count() > 5:
+            raise ValueError('Maximum 5 subjects can be selected for an exam unlock')
 
     def __str__(self):
         if self.subject_id:

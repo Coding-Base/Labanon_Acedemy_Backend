@@ -295,6 +295,7 @@ class EventSerializer(serializers.Serializer):
 class DiplomaSerializer(serializers.ModelSerializer):
     institution_name = serializers.CharField(source='institution.name', read_only=True)
     creator_username = serializers.CharField(source='creator.username', read_only=True)
+    portfolio_token = serializers.SerializerMethodField()
     
     image = serializers.SerializerMethodField()
     image_upload = serializers.FileField(write_only=True, required=False)
@@ -304,9 +305,20 @@ class DiplomaSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'institution', 'institution_name', 'creator', 'creator_username',
             'title', 'slug', 'description', 'image', 'image_upload', 'price', 'duration',
-            'start_date', 'end_date', 'meeting_place', 'published', 'created_at'
+            'start_date', 'end_date', 'meeting_place', 'published', 'created_at', 'portfolio_token'
         ]
-        read_only_fields = ['slug', 'created_at']
+        read_only_fields = ['slug', 'created_at', 'portfolio_token']
+
+    def get_portfolio_token(self, obj):
+        """Get the public token from the institution's portfolio if it exists and is published."""
+        try:
+            if obj.institution and hasattr(obj.institution, 'portfolio'):
+                portfolio = obj.institution.portfolio
+                if portfolio.published:
+                    return portfolio.public_token
+        except:
+            pass
+        return None
 
     def _normalize_path(self, raw: str) -> str:
         if not raw: return ''

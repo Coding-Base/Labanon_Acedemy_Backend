@@ -552,6 +552,281 @@ class DiplomaEnrollmentViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
 
+    @action(detail=False, methods=['post'])
+    def submit_enrollment_info(self, request):
+        """Submit enrollment form data and send emails to institution and platform"""
+        try:
+            diploma_id = request.data.get('diploma_id')
+            full_name = request.data.get('full_name', '').strip()
+            phone = request.data.get('phone', '').strip()
+            email = request.data.get('email', '').strip()
+            academic_status = request.data.get('academic_status', '').strip()
+            address = request.data.get('address', '').strip()
+            
+            # Validate required fields
+            if not all([diploma_id, full_name, phone, email, academic_status]):
+                return Response(
+                    {'detail': 'Full name, phone, email, and academic status are required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get diploma
+            try:
+                diploma = Diploma.objects.get(id=diploma_id)
+            except Diploma.DoesNotExist:
+                return Response({'detail': 'Diploma not found'}, status=status.HTTP_404_NOT_FOUND)
+            
+            # Get institution and its portfolio
+            institution = diploma.institution
+            if not institution:
+                return Response({'detail': 'Institution not found'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Email styling
+            style_container = "max-width:600px; margin:0 auto; font-family:Arial,sans-serif; background-color:#f9fafb; padding:20px;"
+            style_header = "background:linear-gradient(135deg,#16a34a 0%,#fbbf24 100%); color:white; padding:20px; border-radius:8px 8px 0 0;"
+            style_body = "background-color:white; padding:20px; border-radius:0 0 0 8px;"
+            style_footer = "font-size:12px; color:#999; text-align:center; margin-top:20px;"
+            
+            # Format academic status display name
+            academic_status_display = academic_status.replace('_', ' ').title()
+            
+            # ===== EMAIL 1: TO INSTITUTION =====
+            institution_subject = f"New Enrollment Request - {diploma.title}"
+            institution_html = f"""
+            <div style="{style_container}">
+                <div style="{style_header}"><h2 style="margin:0;">New Enrollment Request</h2></div>
+                <div style="{style_body}">
+                    <p><strong>You have received a new enrollment request for:</strong></p>
+                    <h3 style="color:#16a34a; margin:10px 0;">{diploma.title}</h3>
+                    <br>
+                    <table style="width:100%; border-collapse:collapse;">
+                        <tr style="background-color:#f0fdf4;">
+                            <td style="padding:10px; border:1px solid #ddd; font-weight:bold; width:40%;">Student Name</td>
+                            <td style="padding:10px; border:1px solid #ddd;">{full_name}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding:10px; border:1px solid #ddd; font-weight:bold;">Email</td>
+                            <td style="padding:10px; border:1px solid #ddd;"><a href="mailto:{email}">{email}</a></td>
+                        </tr>
+                        <tr style="background-color:#f0fdf4;">
+                            <td style="padding:10px; border:1px solid #ddd; font-weight:bold;">Phone</td>
+                            <td style="padding:10px; border:1px solid #ddd;"><a href="tel:{phone}">{phone}</a></td>
+                        </tr>
+                        <tr>
+                            <td style="padding:10px; border:1px solid #ddd; font-weight:bold;">Academic Status</td>
+                            <td style="padding:10px; border:1px solid #ddd;">{academic_status_display}</td>
+                        </tr>
+                        <tr style="background-color:#f0fdf4;">
+                            <td style="padding:10px; border:1px solid #ddd; font-weight:bold;">Location</td>
+                            <td style="padding:10px; border:1px solid #ddd;">{address or 'Not provided'}</td>
+                        </tr>
+                    </table>
+                    <br>
+                    <div style="background-color:#fef3c7; padding:15px; border-left:4px solid #f59e0b; border-radius:4px;">
+                        <strong>Action Required:</strong><br>
+                        Please contact the student via email or phone to proceed with enrollment.
+                    </div>
+                    <br>
+                    <p style="font-size:12px; color:#666;">This is an automated notification from LightHub Academy.</p>
+                </div>
+                <div style="{style_footer}">&copy; {timezone.now().year} LightHub Academy</div>
+            </div>"""
+            
+            institution_plain = f"""
+New Enrollment Request for: {diploma.title}
+
+Student Information:
+- Name: {full_name}
+- Email: {email}
+- Phone: {phone}
+- Academic Status: {academic_status_display}
+- Location: {address or 'Not provided'}
+
+Please contact the student to proceed with enrollment.
+"""
+            
+            # ===== EMAIL 2: TO PLATFORM ADMIN =====
+            admin_subject = f"New Diploma Enrollment Request - {full_name} for {diploma.title}"
+            admin_html = f"""
+            <div style="{style_container}">
+                <div style="{style_header}"><h2 style="margin:0;">New Diploma Enrollment Submission</h2></div>
+                <div style="{style_body}">
+                    <p><strong>New enrollment request submitted on LightHub Academy</strong></p>
+                    <br>
+                    <table style="width:100%; border-collapse:collapse;">
+                        <tr style="background-color:#f0fdf4;">
+                            <td style="padding:10px; border:1px solid #ddd; font-weight:bold; width:40%;">Program</td>
+                            <td style="padding:10px; border:1px solid #ddd;">{diploma.title}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding:10px; border:1px solid #ddd; font-weight:bold;">Institution</td>
+                            <td style="padding:10px; border:1px solid #ddd;">{institution.name}</td>
+                        </tr>
+                        <tr style="background-color:#f0fdf4;">
+                            <td style="padding:10px; border:1px solid #ddd; font-weight:bold;">Student Name</td>
+                            <td style="padding:10px; border:1px solid #ddd;">{full_name}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding:10px; border:1px solid #ddd; font-weight:bold;">Email</td>
+                            <td style="padding:10px; border:1px solid #ddd;"><a href="mailto:{email}">{email}</a></td>
+                        </tr>
+                        <tr style="background-color:#f0fdf4;">
+                            <td style="padding:10px; border:1px solid #ddd; font-weight:bold;">Phone</td>
+                            <td style="padding:10px; border:1px solid #ddd;">{phone}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding:10px; border:1px solid #ddd; font-weight:bold;">Academic Status</td>
+                            <td style="padding:10px; border:1px solid #ddd;">{academic_status_display}</td>
+                        </tr>
+                        <tr style="background-color:#f0fdf4;">
+                            <td style="padding:10px; border:1px solid #ddd; font-weight:bold;">Location</td>
+                            <td style="padding:10px; border:1px solid #ddd;">{address or 'Not provided'}</td>
+                        </tr>
+                    </table>
+                    <br>
+                    <p style="font-size:12px; color:#666;">This is a platform notification - no action required unless manual intervention is needed.</p>
+                </div>
+                <div style="{style_footer}">&copy; {timezone.now().year} LightHub Academy Admin System</div>
+            </div>"""
+            
+            admin_plain = f"""
+Diploma Enrollment Notification
+
+Program: {diploma.title}
+Institution: {institution.name}
+Student: {full_name}
+Email: {email}
+Phone: {phone}
+Academic Status: {academic_status_display}
+Location: {address or 'Not provided'}
+
+Submitted at: {timezone.now().strftime('%Y-%m-%d %H:%M:%S')}
+"""
+            
+            # ===== EMAIL 3: TO STUDENT =====
+            student_subject = f"Enrollment Request Received - {diploma.title}"
+            student_html = f"""
+            <div style="{style_container}">
+                <div style="{style_header}"><h2 style="margin:0;">Enrollment Request Received</h2></div>
+                <div style="{style_body}">
+                    <p>Dear <strong>{full_name}</strong>,</p>
+                    <p>Thank you for your interest in the <strong>{diploma.title}</strong> program at <strong>{institution.name}</strong>.</p>
+                    <br>
+                    <div style="background-color:#f0fdf4; padding:15px; border-left:4px solid #16a34a; border-radius:4px;">
+                        <p><strong>✓ Your enrollment information has been received</strong></p>
+                        <p>We have successfully submitted your enrollment details to {institution.name}. The institution will contact you shortly at:</p>
+                        <ul style="margin:10px 0;">
+                            <li><strong>Email:</strong> {email}</li>
+                            <li><strong>Phone:</strong> {phone}</li>
+                        </ul>
+                    </div>
+                    <br>
+                    <p><strong>Next Steps:</strong></p>
+                    <ol style="line-height:1.8;">
+                        <li>The institution will review your profile</li>
+                        <li>They will contact you to confirm enrollment </li>
+                        <li>You will receive enrollment confirmation details</li>
+                        {f"<li>Complete payment if applicable</li>" if diploma.price > 0 else ""}
+                    </ol>
+                    <br>
+                    <p>If you don't hear from the institution within 24-48 hours, please contact LightHub Academy support.</p>
+                    <br>
+                    <p>Best regards,<br><strong>The LightHub Academy Team</strong></p>
+                </div>
+                <div style="{style_footer}">&copy; {timezone.now().year} LightHub Academy. All rights reserved.<br><a href="https://lighthubacademy.org" style="color:#16a34a; text-decoration:none;">Visit Website</a></div>
+            </div>"""
+            
+            student_plain = f"""
+Enrollment Request Received
+
+Dear {full_name},
+
+Thank you for your interest in the {diploma.title} program at {institution.name}.
+
+Your enrollment information has been received and submitted to the institution. They will contact you soon at:
+- Email: {email}
+- Phone: {phone}
+
+Best regards,
+The LightHub Academy Team
+"""
+            
+            # Send emails
+            try:
+                # Send to institution
+                if institution.email:
+                    send_mail(
+                        subject=institution_subject,
+                        message=institution_plain,
+                        from_email=settings.DEFAULT_FROM_EMAIL,
+                        recipient_list=[institution.email],
+                        html_message=institution_html,
+                        fail_silently=False
+                    )
+                
+                # Send to platform admin
+                admin_email = getattr(settings, 'ADMIN_EMAIL', settings.DEFAULT_FROM_EMAIL)
+                send_mail(
+                    subject=admin_subject,
+                    message=admin_plain,
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[admin_email],
+                    html_message=admin_html,
+                    fail_silently=False
+                )
+                
+                # Send confirmation to student
+                send_mail(
+                    subject=student_subject,
+                    message=student_plain,
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[email],
+                    html_message=student_html,
+                    fail_silently=True
+                )
+                
+            except Exception as e:
+                # Log error but don't fail - emails might not be critical
+                print(f"Email sending error: {str(e)}")
+            
+            # For free diplomas, create enrollment immediately
+            if diploma.price == 0:
+                enrollment, created = DiplomaEnrollment.objects.get_or_create(
+                    user=request.user,
+                    diploma=diploma,
+                    defaults={'purchased': True, 'purchased_at': timezone.now()}
+                )
+                if not created:
+                    enrollment.purchased = True
+                    enrollment.purchased_at = timezone.now()
+                    enrollment.save()
+                
+                return Response(
+                    {
+                        'success': True,
+                        'detail': 'Enrollment form submitted successfully. Free program access granted.',
+                        'enrolled': True
+                    },
+                    status=status.HTTP_200_OK
+                )
+            
+            # For paid diplomas, return success - user will proceed to payment
+            return Response(
+                {
+                    'success': True,
+                    'detail': 'Enrollment information submitted successfully. Proceed to payment.',
+                    'enrolled': False
+                },
+                status=status.HTTP_200_OK
+            )
+            
+        except Exception as e:
+            print(f"Error in submit_enrollment_info: {str(e)}")
+            return Response(
+                {'detail': f'Error processing enrollment: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
     @action(detail=True, methods=['post'])
     def purchase(self, request, pk=None):
         enrollment = self.get_object()
@@ -580,15 +855,20 @@ class DiplomaEnrollmentViewSet(viewsets.ModelViewSet):
 class PortfolioViewSet(viewsets.ModelViewSet):
     queryset = Portfolio.objects.all().order_by('-created_at') # Added order_by default
     serializer_class = PortfolioSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
 
     def get_queryset(self):
         user = self.request.user
         
-        if IsMasterAdmin().has_permission(self.request, self):
-            return Portfolio.objects.all().order_by('-created_at') # Added order_by
-            
-        return Portfolio.objects.filter(institution__owner=user).order_by('-created_at') # Added order_by
+        if user and user.is_authenticated and (IsMasterAdmin().has_permission(self.request, self) or hasattr(user, 'role')):
+            # Authenticated admin sees all
+            if IsMasterAdmin().has_permission(self.request, self):
+                return Portfolio.objects.all().order_by('-created_at')
+            # Authenticated institution owner sees their own
+            return Portfolio.objects.filter(institution__owner=user).order_by('-created_at')
+        
+        # Unauthenticated users see only published portfolios
+        return Portfolio.objects.filter(published=True).order_by('-created_at')
 
     @action(detail=False, methods=['get'], permission_classes=[AllowAny])
     def by_token(self, request):

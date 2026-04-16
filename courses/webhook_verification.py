@@ -541,7 +541,7 @@ def _handle_unlock_payment(payment: Payment):
         'activation_type': 'exam' | 'interview' | 'account',
         'exam_id': str (for CBT exams),
         'subject_id': int (for interview subjects - legacy),
-        'selected_subject_ids': [1, 2, 3, 4] (for CBT exam subject selection - NEW)
+        'selected_subject_ids': [1, 2, 3, 4, 5] (for CBT exam subject selection - NEW)
     }
     """
     try:
@@ -567,11 +567,11 @@ def _handle_unlock_payment(payment: Payment):
                     defaults={'payment': payment}
                 )
                 
-                # For CBT exam unlocks: add selected subjects to M2M relationship (max 4)
+                # For CBT exam unlocks: add selected subjects to M2M relationship (max 5)
                 if exam_identifier and selected_subject_ids and created:
                     try:
-                        # Validate and limit to 4 subjects
-                        subject_ids = selected_subject_ids[:4] if isinstance(selected_subject_ids, list) else []
+                        # Validate and limit to 5 subjects
+                        subject_ids = selected_subject_ids[:5] if isinstance(selected_subject_ids, list) else []
                         subjects = Subject.objects.filter(id__in=subject_ids)
                         unlock.selected_exam_subjects.set(subjects)
                         logger.info(f"Added {len(subjects)} subjects to unlock {unlock.id}")
