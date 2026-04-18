@@ -870,6 +870,22 @@ class PortfolioViewSet(viewsets.ModelViewSet):
         # Unauthenticated users see only published portfolios
         return Portfolio.objects.filter(published=True).order_by('-created_at')
 
+    def perform_update(self, serializer):
+        """Log incoming data before saving"""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Portfolio Update - Description preview: {serializer.validated_data.get('description', '')[:100]}")
+        logger.info(f"Portfolio Update - Overview preview: {serializer.validated_data.get('overview', '')[:100]}")
+        serializer.save()
+
+    def perform_create(self, serializer):
+        """Log incoming data before saving"""
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Portfolio Create - Description preview: {serializer.validated_data.get('description', '')[:100]}")
+        logger.info(f"Portfolio Create - Overview preview: {serializer.validated_data.get('overview', '')[:100]}")
+        serializer.save()
+
     @action(detail=False, methods=['get'], permission_classes=[AllowAny])
     def by_token(self, request):
         token = request.query_params.get('token')
@@ -877,6 +893,10 @@ class PortfolioViewSet(viewsets.ModelViewSet):
             return Response({'detail': 'Token required'}, status=status.HTTP_400_BAD_REQUEST)
         try:
             portfolio = Portfolio.objects.get(public_token=token, published=True)
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"Public Portfolio Fetch - Description preview: {portfolio.description[:100]}")
+            logger.info(f"Public Portfolio Fetch - Overview preview: {portfolio.overview[:100]}")
             serializer = self.get_serializer(portfolio)
             return Response(serializer.data)
         except Portfolio.DoesNotExist:
