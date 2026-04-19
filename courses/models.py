@@ -299,6 +299,14 @@ class Diploma(models.Model):
     meeting_place = models.CharField(max_length=255, help_text="Physical location of the program")
     published = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
+    
+    # Rich text sections for diploma details (HTML content from rich text editor)
+    overview = models.TextField(blank=True, help_text="Overview of the diploma program")
+    admissions = models.TextField(blank=True, help_text="Admissions information and requirements")
+    academics = models.TextField(blank=True, help_text="Academic details and curriculum")
+    tuition_financing = models.TextField(blank=True, help_text="Tuition fees and financing options")
+    careers = models.TextField(blank=True, help_text="Career prospects and alumni success")
+    student_experience = models.TextField(blank=True, help_text="Student experience and testimonials")
 
 
 class Visit(models.Model):

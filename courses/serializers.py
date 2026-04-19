@@ -305,7 +305,8 @@ class DiplomaSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'institution', 'institution_name', 'creator', 'creator_username',
             'title', 'slug', 'description', 'image', 'image_upload', 'price', 'duration',
-            'start_date', 'end_date', 'meeting_place', 'published', 'created_at', 'portfolio_token'
+            'start_date', 'end_date', 'meeting_place', 'published', 'created_at', 'portfolio_token',
+            'overview', 'admissions', 'academics', 'tuition_financing', 'careers', 'student_experience'
         ]
         read_only_fields = ['slug', 'created_at', 'portfolio_token']
 
