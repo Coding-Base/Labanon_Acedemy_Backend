@@ -1,5 +1,7 @@
 from django.db import models
 from django.conf import settings
+from django.utils import timezone
+import uuid
 
 
 class Message(models.Model):
@@ -47,3 +49,45 @@ class Message(models.Model):
         if not self.is_read:
             self.is_read = True
             self.save(update_fields=['is_read'])
+
+
+class DirectMessage(models.Model):
+    """Direct messages between admin and users (2-way conversation)."""
+    thread_id = models.CharField(
+        max_length=255, 
+        db_index=True,
+        help_text="Unique identifier for conversation thread (e.g., 'admin_{sender_id}_{recipient_id}')"
+    )
+    sender = models.ForeignKey(
+        settings.AUTH_USER_MODEL, 
+        on_delete=models.CASCADE, 
+        related_name='direct_messages_sent'
+    )
+    recipient = models.ForeignKey(
+        settings.AUTH_USER_MODEL, 
+        on_delete=models.CASCADE, 
+        related_name='direct_messages_received'
+    )
+    message = models.TextField()
+    is_read = models.BooleanField(default=False)
+    read_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['created_at']
+        indexes = [
+            models.Index(fields=['thread_id', 'created_at']),
+            models.Index(fields=['recipient', '-created_at']),
+            models.Index(fields=['sender', '-created_at']),
+            models.Index(fields=['is_read']),
+        ]
+
+    def __str__(self):
+        return f"Direct: {self.sender} → {self.recipient} ({self.created_at})"
+
+    def mark_as_read(self):
+        if not self.is_read:
+            self.is_read = True
+            self.read_at = timezone.now()
+            self.save(update_fields=['is_read', 'read_at'])
