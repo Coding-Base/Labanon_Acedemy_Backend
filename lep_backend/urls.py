@@ -27,6 +27,10 @@ urlpatterns = [
     path('api/users/', include('users.urls')),
     path('api/admin/', include('users.urls')),  # Admin routes
     path('api/dashboard/', DashboardView.as_view(), name='dashboard'),
+    # Register lessons before the generic `api/` courses include so
+    # the dedicated `lessons` routes take precedence and don't get
+    # swallowed by the courses app router which also exposes a `lessons` prefix.
+    path('api/lessons/', include('lessons.urls')),
     path('api/', include('courses.urls')),
     # Compatibility mount: some frontend code historically requested under /api/courses/
     # Expose the same `courses` app routes at /api/courses/ to avoid 404s from older clients.

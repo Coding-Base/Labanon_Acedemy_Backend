@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     'subadmin',
     'messaging',
     'mock_exams',
+    'lessons',
 ]
 INSTALLED_APPS = [a for a in INSTALLED_APPS if a]
 
