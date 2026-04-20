@@ -451,9 +451,41 @@ class StartExamView(APIView):
         total_num_questions = 0
         all_selected_questions = []
         subjects_info = []
+        is_trial_attempt = False
         
-        # For multi-subject exams: verify student has selected these subjects in their unlock
-        if subjects_config and exam_id:
+        # Check if user has an unlock for this exam
+        has_unlock = False
+        if request.user.is_authenticated:
+            has_unlock = ActivationUnlock.objects.filter(
+                user=request.user, 
+                exam_identifier=str(exam_id)
+            ).exists() or getattr(request.user, 'is_unlocked', False)
+        
+        # If no unlock, check if they can use free trial (max 5 attempts per exam)
+        if not has_unlock:
+            trial_attempts_count = ExamAttempt.objects.filter(
+                user=request.user,
+                exam_id=exam_id,
+                is_trial_attempt=True
+            ).count()
+            
+            if trial_attempts_count >= 5:
+                return Response(
+                    {
+                        'detail': 'You have exhausted your free trial attempts for this exam.',
+                        'trial_attempts_used': trial_attempts_count,
+                        'trial_attempts_limit': 5,
+                        'message': 'Free trial limited to 5 attempts. Unlock this exam to continue practicing.',
+                        'action': 'Unlock Exam'
+                    },
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            # Mark this as a trial attempt
+            is_trial_attempt = True
+        
+        # For multi-subject exams: verify student has selected these subjects in their unlock (if they have one)
+        if subjects_config and exam_id and has_unlock:
             try:
                 unlock = ActivationUnlock.objects.get(user=request.user, exam_identifier=str(exam_id))
                 allowed_subject_ids = set(unlock.selected_exam_subjects.values_list('id', flat=True))
@@ -527,7 +559,8 @@ class StartExamView(APIView):
             test_name=test_name,
             num_questions=total_num_questions,
             time_limit_minutes=int(time_limit_minutes),
-            started_at=timezone.now()
+            started_at=timezone.now(),
+            is_trial_attempt=is_trial_attempt
         )
 
         # Create student answer records for each question
@@ -539,15 +572,29 @@ class StartExamView(APIView):
             )
 
         # Return exam attempt details
-        return Response({
+        response_data = {
             'exam_attempt_id': exam_attempt.id,
             'test_name': test_name or exam.title,
             'exam_title': exam.title,
             'subjects': subjects_info,
             'num_questions': total_num_questions,
             'time_limit_minutes': time_limit_minutes,
-            'started_at': exam_attempt.started_at
-        }, status=status.HTTP_201_CREATED)
+            'started_at': exam_attempt.started_at,
+            'is_trial_attempt': is_trial_attempt
+        }
+        
+        # Add trial attempt info if this is a trial
+        if is_trial_attempt:
+            trial_attempts = ExamAttempt.objects.filter(
+                user=request.user,
+                exam_id=exam_id,
+                is_trial_attempt=True
+            ).count()
+            response_data['trial_attempts_used'] = trial_attempts
+            response_data['trial_attempts_remaining'] = 5 - trial_attempts
+            response_data['trial_message'] = f'Free trial: {trial_attempts}/5 attempts used'
+        
+        return Response(response_data, status=status.HTTP_201_CREATED)
 
 
 class SubmitAnswerView(APIView):

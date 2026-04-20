@@ -1305,6 +1305,33 @@ class ActivationStatusView(APIView):
             if allowed_subjects:
                 response_data['allowed_subjects'] = allowed_subjects
             
+            # Add trial attempt info if this is an exam query and user doesn't have unlock
+            if exam and not unlocked:
+                from cbt.models import Exam as CBTExam, ExamAttempt
+                try:
+                    # Get exam object for counting attempts
+                    exam_obj = None
+                    try:
+                        exam_obj = CBTExam.objects.get(id=int(exam))
+                    except (ValueError, CBTExam.DoesNotExist):
+                        try:
+                            exam_obj = CBTExam.objects.get(slug=str(exam))
+                        except CBTExam.DoesNotExist:
+                            exam_obj = None
+                    
+                    if exam_obj:
+                        # Count trial attempts for this user on this exam
+                        trial_attempts = ExamAttempt.objects.filter(
+                            user=user,
+                            exam_id=exam_obj.id,
+                            is_trial_attempt=True
+                        ).count()
+                        response_data['trial_attempts_used'] = trial_attempts
+                        response_data['trial_attempts_remaining'] = max(0, 5 - trial_attempts)
+                        response_data['trial_available'] = trial_attempts < 5
+                except Exception as e:
+                    logger.warning(f"Failed to fetch trial attempts for user {user.id} exam {exam}: {str(e)}")
+            
             return Response(response_data, status=status.HTTP_200_OK)
         except Exception as e:
             logger.error(f"Activation status check failed: {str(e)}")

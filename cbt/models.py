@@ -79,13 +79,15 @@ class ExamAttempt(models.Model):
     score = models.FloatField(null=True, blank=True)
     time_taken_seconds = models.PositiveIntegerField(null=True, blank=True)
     is_submitted = models.BooleanField(default=False)
+    is_trial_attempt = models.BooleanField(default=False, help_text="Whether this is a free trial attempt (max 5 per exam)")
 
     class Meta:
         ordering = ['-started_at']
 
     def __str__(self):
         display_name = self.test_name or (self.subject.name if self.subject else 'Multi-Subject')
-        return f"{self.user.username} - {self.exam.title} - {display_name}"
+        trial_label = " [TRIAL]" if self.is_trial_attempt else ""
+        return f"{self.user.username} - {self.exam.title} - {display_name}{trial_label}"
 
 
 class StudentAnswer(models.Model):
