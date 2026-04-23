@@ -1418,21 +1418,29 @@ class LegalDocumentViewSet(viewsets.ModelViewSet):
         # Get specific documents for this user
         specific_docs = qs.filter(recipient_type='specific')
         
-        # Check if user is a tutor or institution owner
-        if hasattr(user, 'tutor_profile') or user.groups.filter(name='Tutors').exists():
+        # Check if user is a tutor (check role field first, then tutor_profile/groups as fallback)
+        if user.role == 'tutor' or hasattr(user, 'tutor_profile') or user.groups.filter(name='Tutors').exists():
             # User is a tutor - get docs where they're in tutor_recipients
             tutor_docs = specific_docs.filter(tutor_recipients=user)
             return (all_user_docs | tutor_docs).distinct().order_by('-updated_at')
         
-        # Check if user is an institution owner
-        try:
-            institution = user.owned_institutions.first()
-            if institution:
-                # User owns an institution - get docs where their institution is in recipients
-                inst_docs = specific_docs.filter(institution_recipients=institution)
-                return (all_user_docs | inst_docs).distinct().order_by('-updated_at')
-        except:
-            pass
+        # Check if user is an institution owner (check role field first, then owned_institutions as fallback)
+        is_institution = user.role == 'institution'
+        if not is_institution:
+            try:
+                is_institution = user.owned_institutions.exists()
+            except:
+                is_institution = False
+        
+        if is_institution:
+            try:
+                institution = user.owned_institutions.first()
+                if institution:
+                    # User owns an institution - get docs where their institution is in recipients
+                    inst_docs = specific_docs.filter(institution_recipients=institution)
+                    return (all_user_docs | inst_docs).distinct().order_by('-updated_at')
+            except:
+                pass
         
         # Default: only show all-user documents
         return all_user_docs.order_by('-updated_at')
