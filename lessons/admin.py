@@ -1,6 +1,6 @@
 # backend/lessons/admin.py
 from django.contrib import admin
-from .models import Subject, Topic, LessonContent, StudentLessonProgress, LessonSearch
+from .models import Subject, LessonSubfolder, Topic, LessonContent, StudentLessonProgress, LessonSearch
 
 
 @admin.register(Subject)
@@ -13,23 +13,32 @@ class SubjectAdmin(admin.ModelAdmin):
 
 @admin.register(Topic)
 class TopicAdmin(admin.ModelAdmin):
+    list_display = ('name', 'subject', 'subfolder', 'is_custom', 'order', 'created_at')
+    search_fields = ('name', 'subject__name', 'subfolder__name')
+    list_filter = ('subject', 'subfolder', 'is_custom', 'created_at')
+    ordering = ('subject', 'subfolder', 'order')
+    readonly_fields = ('id', 'created_at', 'updated_at')
+
+
+@admin.register(LessonSubfolder)
+class LessonSubfolderAdmin(admin.ModelAdmin):
     list_display = ('name', 'subject', 'is_custom', 'order', 'created_at')
     search_fields = ('name', 'subject__name')
     list_filter = ('subject', 'is_custom', 'created_at')
-    ordering = ('subject', 'order')
+    ordering = ('subject', 'order', 'name')
     readonly_fields = ('id', 'created_at', 'updated_at')
 
 
 @admin.register(LessonContent)
 class LessonContentAdmin(admin.ModelAdmin):
     list_display = ('title', 'topic', 'publisher_name', 'is_published', 'order', 'published_date')
-    search_fields = ('title', 'topic__name', 'topic__subject__name')
-    list_filter = ('is_published', 'topic__subject', 'published_date')
+    search_fields = ('title', 'tags', 'topic__name', 'topic__subfolder__name', 'topic__subject__name')
+    list_filter = ('is_published', 'topic__subject', 'topic__subfolder', 'published_date')
     filter_horizontal = ('linked_topics',)
     readonly_fields = ('id', 'published_date', 'created_at', 'updated_at')
     fieldsets = (
         ('Content', {
-            'fields': ('topic', 'title', 'content', 'embedded_images')
+            'fields': ('topic', 'title', 'content', 'tags', 'embedded_images')
         }),
         ('Publisher Info', {
             'fields': ('publisher_name', 'publisher_title', 'published_date')

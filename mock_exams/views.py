@@ -341,12 +341,24 @@ class StudentMockExamViewSet(viewsets.ReadOnlyModelViewSet):
                 'message': 'You have full access to mock exams'
             }, status=status.HTTP_200_OK)
         
-        # Check 2: User has any existing ActivationUnlock record
+        # Check 2: User has any existing ActivationUnlock record (CBT exams or mock exams)
         if ActivationUnlock.objects.filter(user=user).exists():
             return Response({
                 'unlocked': True,
                 'reason': 'existing_unlock',
                 'message': 'You have previously unlocked exams. Mock exams are free for you.'
+            }, status=status.HTTP_200_OK)
+        
+        # Check 2.5: User has specifically unlocked this mock exam
+        mock_exam_unlock = ActivationUnlock.objects.filter(
+            user=user,
+            exam_identifier=f"mock_exam_{exam.id}"
+        ).exists()
+        if mock_exam_unlock:
+            return Response({
+                'unlocked': True,
+                'reason': 'mock_exam_unlock',
+                'message': 'You have unlocked this mock exam.'
             }, status=status.HTTP_200_OK)
         
         # Check 3: Exam is free

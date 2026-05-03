@@ -24,12 +24,12 @@ class Subject(models.Model):
         return self.name
 
 
-class Topic(models.Model):
+class LessonSubfolder(models.Model):
     """
-    Topic/Area under a subject (e.g., 'Quadratic Equations' under Mathematics)
+    Department/subfolder under a subject/folder (e.g., Chemical Engineering under Engineering)
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    subject = models.ForeignKey(Subject, on_delete=models.CASCADE, related_name='topics')
+    subject = models.ForeignKey(Subject, on_delete=models.CASCADE, related_name='subfolders')
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     is_custom = models.BooleanField(default=False, help_text="Whether this was created by admin via custom input")
@@ -43,6 +43,33 @@ class Topic(models.Model):
 
     def __str__(self):
         return f"{self.subject.name} - {self.name}"
+
+
+class Topic(models.Model):
+    """
+    Topic/Area under a subject (e.g., 'Quadratic Equations' under Mathematics)
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    subject = models.ForeignKey(Subject, on_delete=models.CASCADE, related_name='topics')
+    subfolder = models.ForeignKey(LessonSubfolder, on_delete=models.CASCADE, related_name='topics')
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    is_custom = models.BooleanField(default=False, help_text="Whether this was created by admin via custom input")
+    order = models.PositiveIntegerField(default=0, help_text="Display order within subject")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['subject', 'subfolder', 'order', 'name']
+        unique_together = ('subfolder', 'name')
+
+    def save(self, *args, **kwargs):
+        if self.subfolder_id:
+            self.subject = self.subfolder.subject
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.subject.name} - {self.subfolder.name} - {self.name}"
 
 
 class LessonContent(models.Model):
@@ -70,6 +97,7 @@ class LessonContent(models.Model):
     meta_description = models.CharField(max_length=160, blank=True, help_text="SEO meta description (60-160 chars), displayed in search results")
     meta_keywords = models.CharField(max_length=255, blank=True, help_text="Comma-separated keywords for SEO")
     og_image = models.URLField(blank=True, default='', help_text="Open Graph image URL for social sharing")
+    tags = models.CharField(max_length=500, blank=True, help_text="Comma-separated lesson search tags")
     
     # Metadata
     is_published = models.BooleanField(default=True)

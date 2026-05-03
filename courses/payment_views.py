@@ -589,8 +589,8 @@ class InitiatePaymentView(APIView):
         if not item_type or amount is None:
             return Response({'detail': 'Missing required fields'}, status=status.HTTP_400_BAD_REQUEST)
 
-        if item_type in ('course', 'diploma') and (item_id is None or str(item_id).strip() == ''):
-            return Response({'detail': 'Missing required fields: item_id required for course/diploma'}, status=status.HTTP_400_BAD_REQUEST)
+        if item_type in ('course', 'diploma', 'mock_exam') and (item_id is None or str(item_id).strip() == ''):
+            return Response({'detail': 'Missing required fields: item_id required for course/diploma/mock_exam'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             amount = float(amount)
@@ -619,6 +619,16 @@ class InitiatePaymentView(APIView):
                     'exam_id': request.data.get('exam_id') or request.data.get('item_id'),
                     'subject_id': request.data.get('subject_id'),
                     'activation_role': request.data.get('activation_role') or (request.data.get('activation') and request.data.get('activation').get('role')),
+                }
+            elif item_type == 'mock_exam':
+                # Mock exam unlock payment
+                from mock_exams.models import CustomMockExam
+                item = CustomMockExam.objects.get(id=item_id)
+                kind = Payment.KIND_UNLOCK
+                activation_meta = {
+                    'activation_type': 'mock_exam',
+                    'exam_id': item_id,
+                    'mock_exam_id': item_id,
                 }
             else:
                 return Response({'detail': 'Invalid item_type'}, status=status.HTTP_400_BAD_REQUEST)
@@ -1664,8 +1674,8 @@ class InitiateFlutterwavePaymentView(APIView):
         if not item_type or amount is None:
             return Response({'detail': 'Missing required fields'}, status=status.HTTP_400_BAD_REQUEST)
 
-        if item_type in ('course', 'diploma') and (item_id is None or str(item_id).strip() == ''):
-            return Response({'detail': 'Missing required fields: item_id required for course/diploma'}, status=status.HTTP_400_BAD_REQUEST)
+        if item_type in ('course', 'diploma', 'mock_exam') and (item_id is None or str(item_id).strip() == ''):
+            return Response({'detail': 'Missing required fields: item_id required for course/diploma/mock_exam'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             amount = float(amount)

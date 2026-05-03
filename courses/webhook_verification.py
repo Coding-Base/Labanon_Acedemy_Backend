@@ -583,6 +583,20 @@ def _handle_unlock_payment(payment: Payment):
             if activation_type == 'account':
                 payment.user.is_unlocked = True
                 payment.user.save()
+            elif activation_type == 'mock_exam':
+                # Handle mock exam unlock
+                mock_exam_id = activation.get('mock_exam_id') or activation.get('exam_id')
+                if mock_exam_id:
+                    try:
+                        unlock, created = ActivationUnlock.objects.get_or_create(
+                            user=payment.user,
+                            exam_identifier=f"mock_exam_{mock_exam_id}",
+                            defaults={'payment': payment}
+                        )
+                        if created:
+                            logger.info(f"Created mock exam unlock for user {payment.user.username}, exam {mock_exam_id}")
+                    except Exception as e:
+                        logger.error(f"Failed to create mock exam unlock: {str(e)}")
     except Exception as e:
         logger.error(f"Failed to create activation unlock for payment {payment.id}: {str(e)}")
 

@@ -10,9 +10,9 @@ from django.utils import timezone
 import json
 
 from users.permissions import IsMasterAdmin
-from .models import Subject, Topic, LessonContent, StudentLessonProgress, LessonSearch
+from .models import Subject, LessonSubfolder, Topic, LessonContent, StudentLessonProgress, LessonSearch
 from .serializers import (
-    SubjectSerializer, TopicSerializer, LessonContentSerializer,
+    SubjectSerializer, LessonSubfolderSerializer, TopicSerializer, LessonContentSerializer,
     StudentLessonProgressSerializer, LessonSearchSerializer,
     SubjectFolderSerializer, TopicDetailSerializer
 )
@@ -62,9 +62,33 @@ class SubjectViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], permission_classes=[permissions.AllowAny])
     def list_subjects_with_topics(self, request):
         """Get all subjects with their topics (for student folder view)"""
-        subjects = Subject.objects.prefetch_related('topics__lessons').all()
+        subjects = Subject.objects.prefetch_related('subfolders__topics__lessons').all()
         serializer = SubjectFolderSerializer(subjects, many=True)
         return Response(serializer.data)
+
+
+class LessonSubfolderViewSet(viewsets.ModelViewSet):
+    """
+    CRUD operations for lesson subfolders/departments under a subject/folder.
+    """
+    queryset = LessonSubfolder.objects.select_related('subject').all()
+    serializer_class = LessonSubfolderSerializer
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter, DjangoFilterBackend]
+    search_fields = ['name', 'description', 'subject__name']
+    filterset_fields = ['subject']
+    ordering_fields = ['name', 'order', 'created_at']
+    ordering = ['subject', 'order', 'name']
+
+    def get_permissions(self):
+        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+            permission_classes = [permissions.IsAuthenticated]
+        else:
+            permission_classes = [permissions.AllowAny]
+        return [permission() for permission in permission_classes]
+
+    def perform_create(self, serializer):
+        serializer.save(is_custom=True)
 
 
 class TopicViewSet(viewsets.ModelViewSet):
@@ -73,12 +97,12 @@ class TopicViewSet(viewsets.ModelViewSet):
     - Admin can create/update/delete topics
     - Everyone can list topics
     """
-    queryset = Topic.objects.all()
+    queryset = Topic.objects.select_related('subject', 'subfolder').all()
     serializer_class = TopicSerializer
     pagination_class = StandardResultsSetPagination
     filter_backends = [filters.SearchFilter, filters.OrderingFilter, DjangoFilterBackend]
-    search_fields = ['name', 'description', 'subject__name']
-    filterset_fields = ['subject']
+    search_fields = ['name', 'description', 'subject__name', 'subfolder__name']
+    filterset_fields = ['subject', 'subfolder']
     ordering_fields = ['name', 'order', 'created_at']
     ordering = ['order', 'name']
 
@@ -109,7 +133,7 @@ class TopicViewSet(viewsets.ModelViewSet):
         if not subject_id:
             return Response({'detail': 'subject_id is required'}, status=status.HTTP_400_BAD_REQUEST)
         
-        topics = Topic.objects.filter(subject_id=subject_id).order_by('order', 'name')
+        topics = Topic.objects.filter(subject_id=subject_id).select_related('subject', 'subfolder').order_by('order', 'name')
         serializer = TopicSerializer(topics, many=True)
         return Response(serializer.data)
 
@@ -124,8 +148,8 @@ class LessonContentViewSet(viewsets.ModelViewSet):
     serializer_class = LessonContentSerializer
     pagination_class = StandardResultsSetPagination
     filter_backends = [filters.SearchFilter, filters.OrderingFilter, DjangoFilterBackend]
-    search_fields = ['title', 'content', 'topic__name', 'topic__subject__name']
-    filterset_fields = ['topic', 'topic__subject', 'is_published']
+    search_fields = ['title', 'content', 'tags', 'topic__name', 'topic__subfolder__name', 'topic__subject__name']
+    filterset_fields = ['topic', 'topic__subfolder', 'topic__subject', 'is_published']
     ordering_fields = ['order', 'created_at', 'published_date']
     ordering = ['order', 'created_at']
 
@@ -139,13 +163,13 @@ class LessonContentViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         if isinstance(self.request.user, type) or not self.request.user.is_authenticated:
             # Anonymous user - show only published
-            return LessonContent.objects.filter(is_published=True).order_by('order', 'created_at')
+            return LessonContent.objects.select_related('topic__subject', 'topic__subfolder').filter(is_published=True).order_by('order', 'created_at')
         
         # Authenticated user - show all if admin, only published otherwise
         if self.request.user.is_staff or (hasattr(self.request.user, 'is_master_admin') and self.request.user.is_master_admin):
-            return LessonContent.objects.all().order_by('order', 'created_at')
+            return LessonContent.objects.select_related('topic__subject', 'topic__subfolder').all().order_by('order', 'created_at')
         
-        return LessonContent.objects.filter(is_published=True).order_by('order', 'created_at')
+        return LessonContent.objects.select_related('topic__subject', 'topic__subfolder').filter(is_published=True).order_by('order', 'created_at')
 
     def perform_create(self, serializer):
         serializer.save()
@@ -204,7 +228,7 @@ class LessonContentViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
     def search(self, request):
-        """Search lessons by title, topic, subject"""
+        """Search lessons by title, tag, topic, subfolder, or subject"""
         query = request.query_params.get('q', '').strip()
         if not query:
             return Response({'detail': 'Search query is required'}, status=status.HTTP_400_BAD_REQUEST)
@@ -213,10 +237,12 @@ class LessonContentViewSet(viewsets.ModelViewSet):
         results = LessonContent.objects.filter(
             Q(title__icontains=query) |
             Q(content__icontains=query) |
+            Q(tags__icontains=query) |
             Q(topic__name__icontains=query) |
+            Q(topic__subfolder__name__icontains=query) |
             Q(topic__subject__name__icontains=query),
             is_published=True
-        ).distinct()
+        ).select_related('topic__subject', 'topic__subfolder').distinct()
         
         if request.user.is_authenticated:
             LessonSearch.objects.create(
@@ -269,6 +295,7 @@ class LessonAnalyticsAPIView(viewsets.ViewSet):
             stats.append({
                 'subject_id': subject.id,
                 'subject_name': subject.name,
+                'subfolders_count': subject.subfolders.count(),
                 'topics_count': topics_count,
                 'lessons_count': lessons_count,
                 'total_views': views,
