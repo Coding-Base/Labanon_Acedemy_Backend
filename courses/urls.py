@@ -32,6 +32,10 @@ from .batch_compliance_views import (
     VerificationFolderAdminDashboardView, ApproveComplianceFolderView,
     RejectComplianceFolderView
 )
+from .referral_views import (
+    AdminReferralEventsView, AdminReferralSettingsView, ApplyReferralCodeView,
+    MyReferralView, RedeemReferralPointsView
+)
 
 # Custom payment endpoints MUST be defined before router to take precedence
 urlpatterns = [
@@ -55,6 +59,13 @@ urlpatterns = [
     path('analytics/track/', TrackPageView.as_view(), name='analytics-track'),
     path('analytics/referrers/', ReferrerStatsView.as_view(), name='analytics-referrers'),
     path('payments/webhook/', PaystackWebhookView.as_view(), name='paystack-webhook'),
+
+    # Referral system
+    path('referrals/me/', MyReferralView.as_view(), name='referrals-me'),
+    path('referrals/apply-code/', ApplyReferralCodeView.as_view(), name='referrals-apply-code'),
+    path('referrals/redeem/', RedeemReferralPointsView.as_view(), name='referrals-redeem'),
+    path('referrals/admin/settings/', AdminReferralSettingsView.as_view(), name='referrals-admin-settings'),
+    path('referrals/admin/events/', AdminReferralEventsView.as_view(), name='referrals-admin-events'),
 
     # Flutterwave Payment endpoints
     path('payments/flutterwave/initiate/', InitiateFlutterwavePaymentView.as_view(), name='initiate-flutterwave-payment'),

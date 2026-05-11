@@ -25,6 +25,9 @@ class UserSerializer(serializers.ModelSerializer):
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
     admin_secret = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    referral_code = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    first_name = serializers.CharField(required=False, allow_blank=True)
+    last_name = serializers.CharField(required=False, allow_blank=True)
 
     # Allow spaces in username in addition to the default set of allowed characters
     username = serializers.CharField(
@@ -39,7 +42,7 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['username', 'email', 'password', 'role', 'institution_name', 'admin_secret']
+        fields = ['username', 'email', 'password', 'role', 'institution_name', 'admin_secret', 'referral_code', 'first_name', 'last_name']
 
     def validate_email(self, value):
         """Ensure email is not already used (verified or unverified)"""
@@ -53,6 +56,7 @@ class RegisterSerializer(serializers.ModelSerializer):
         password = validated_data.pop('password')
         role = validated_data.get('role')
         admin_secret = validated_data.pop('admin_secret', '')
+        referral_code = validated_data.pop('referral_code', '')
         
         # Prevent anonymous or non-admin users from registering as 'admin'
         if role == User.ADMIN:
@@ -75,6 +79,13 @@ class RegisterSerializer(serializers.ModelSerializer):
         user.email_verified = False
         user.email_verification_token = str(uuid.uuid4())
         user.save()
+
+        if referral_code:
+            try:
+                from courses.referral_utils import apply_referral_code
+                apply_referral_code(user, referral_code)
+            except Exception:
+                pass
 
         # If account was created as an Admin (and validation allowed it), set staff/superuser flags
         try:
@@ -138,6 +149,7 @@ class DjoserUserCreateSerializer(DjoserBaseUserCreateSerializer):
     role = serializers.ChoiceField(choices=User.ROLE_CHOICES, default=User.STUDENT)
     institution_name = serializers.CharField(allow_blank=True, required=False)
     admin_secret = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    referral_code = serializers.CharField(write_only=True, required=False, allow_blank=True)
 
     # Override the username field coming from Djoser to permit spaces
     username = serializers.CharField(
@@ -152,7 +164,7 @@ class DjoserUserCreateSerializer(DjoserBaseUserCreateSerializer):
 
     class Meta(DjoserBaseUserCreateSerializer.Meta):
         model = User
-        fields = ('id', 'username', 'email', 'password', 'role', 'institution_name', 'admin_secret')
+        fields = ('id', 'username', 'email', 'password', 'role', 'institution_name', 'admin_secret', 'referral_code')
 
     def validate(self, attrs):
         # Prevent registering as admin unless the requester is an authenticated admin
@@ -177,6 +189,7 @@ class DjoserUserCreateSerializer(DjoserBaseUserCreateSerializer):
         return super().validate(attrs)
 
     def create(self, validated_data):
+        referral_code = validated_data.pop('referral_code', '')
         # Allow Djoser to handle the standard user creation
         user = super().create(validated_data)
         
@@ -215,6 +228,13 @@ class DjoserUserCreateSerializer(DjoserBaseUserCreateSerializer):
                 user.save()
         except Exception:
             pass
+
+        if referral_code:
+            try:
+                from courses.referral_utils import apply_referral_code
+                apply_referral_code(user, referral_code)
+            except Exception:
+                pass
 
         return user
 
@@ -576,6 +596,12 @@ class EmailVerificationSerializer(serializers.Serializer):
         user.email_verified_at = timezone.now()
         user.email_verification_token = None
         user.save()
+        try:
+            # Track signup event for referral system (no points awarded for signups)
+            from courses.referral_utils import award_signup_verified
+            award_signup_verified(user)
+        except Exception:
+            pass
         return user
 
 

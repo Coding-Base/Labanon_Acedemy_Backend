@@ -34,6 +34,7 @@ from .paystack_utils import PaystackClient, naira_to_kobo, calculate_split, gene
 from .flutterwave_utils import FlutterwaveClient, FlutterwaveError, generate_payment_reference as generate_flutterwave_reference
 from .serializers import PaymentSerializer
 from promos.models import PromoCode
+from .referral_utils import apply_referral_code, award_course_purchase, award_material_purchase
 try:
     from google.analytics.data_v1beta import BetaAnalyticsDataClient
     from google.analytics.data_v1beta.types import DateRange, Metric, Dimension, RunReportRequest
@@ -731,6 +732,13 @@ class InitiatePaymentView(APIView):
 
             payment = Payment.objects.create(**payment_data)
 
+            try:
+                referral_code = request.data.get('referral_code') or request.data.get('ref')
+                if referral_code:
+                    apply_referral_code(user, referral_code)
+            except Exception:
+                logger.exception("Failed to apply referral code during payment initiation")
+
             # --- Attribution: attach Visit to Payment if visit_id provided ---
             try:
                 visit_id = request.data.get('visit_id') or (request.data.get('visit') and request.data.get('visit').get('id'))
@@ -861,6 +869,10 @@ class VerifyPaymentView(APIView):
                                     course=payment.course,
                                     defaults={'purchased': True, 'purchased_at': timezone.now()}
                                 )
+                                try:
+                                    award_course_purchase(payment)
+                                except Exception:
+                                    logger.exception(f"Failed to award course referral for Payment {payment.id}")
                             elif payment.kind == Payment.KIND_DIPLOMA and payment.diploma:
                                 DiplomaEnrollment.objects.update_or_create(
                                     user=payment.user,
@@ -908,6 +920,10 @@ class VerifyPaymentView(APIView):
                                                 material=material_obj,
                                                 defaults={'payment': payment, 'accessed_at': timezone.now()}
                                             )
+                                            try:
+                                                award_material_purchase(payment, material_obj)
+                                            except Exception:
+                                                logger.exception(f"Failed to award material referral for Payment {payment.id}")
                                             logger.info(f"[PAYMENT-DEBUG] MaterialPurchase {'created' if created else 'updated'}: {purchase.id}")
                                         except Material.DoesNotExist:
                                             logger.error(f"[PAYMENT-DEBUG] Material with id {mat_id} not found when finalizing payment {payment.id}")
@@ -1758,6 +1774,13 @@ class InitiateFlutterwavePaymentView(APIView):
             payment = Payment.objects.create(**payment_data)
 
             try:
+                referral_code = request.data.get('referral_code') or request.data.get('ref')
+                if referral_code:
+                    apply_referral_code(user, referral_code)
+            except Exception:
+                logger.exception("Failed to apply referral code during Flutterwave initiation")
+
+            try:
                 client = FlutterwaveClient()
                 metadata = {
                     'payment_id': payment.id,
@@ -1857,6 +1880,10 @@ class VerifyFlutterwavePaymentView(APIView):
                                     course=payment.course,
                                     defaults={'purchased': True, 'purchased_at': timezone.now()}
                                 )
+                                try:
+                                    award_course_purchase(payment)
+                                except Exception:
+                                    logger.exception(f"Failed to award course referral for Flutterwave Payment {payment.id}")
                             elif payment.kind == Payment.KIND_DIPLOMA and payment.diploma:
                                 DiplomaEnrollment.objects.update_or_create(
                                     user=payment.user,

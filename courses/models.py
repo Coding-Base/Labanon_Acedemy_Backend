@@ -1,6 +1,7 @@
 # backend/courses/models.py
 
 from django.db import models
+from decimal import Decimal
 from django.conf import settings
 from django.utils import timezone
 from django.db.models import Avg, Sum 
@@ -447,6 +448,115 @@ class PaymentSplitConfig(models.Model):
         if not obj:
             obj = cls.objects.create()
         return obj
+
+
+class ReferralSettings(models.Model):
+    """Singleton settings for referral rewards managed by master admin."""
+    points_per_success = models.PositiveIntegerField(default=1000)
+    # Fractional percent stored as decimal fraction. Example: 0.05 represents 5%.
+    referral_percent = models.DecimalField(max_digits=8, decimal_places=6, default=Decimal('0.05'), help_text='Decimal fraction representing percent of platform share to award (e.g., 0.05 means 5%)')
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+
+    class Meta:
+        verbose_name = "Referral Settings"
+        verbose_name_plural = "Referral Settings"
+
+    def __str__(self):
+        return f"Referral settings ({self.points_per_success} points)"
+
+    @classmethod
+    def get_solo(cls):
+        obj = cls.objects.first()
+        if not obj:
+            obj = cls.objects.create()
+        return obj
+
+
+class ReferralProfile(models.Model):
+    """Referral wallet/profile for each user."""
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='referral_profile')
+    code = models.CharField(max_length=24, unique=True, db_index=True)
+    # Store as currency-like credit with two decimal places
+    points_balance = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.user} - {self.code}"
+
+
+class ReferralRelationship(models.Model):
+    """Links a referred user to the referrer whose code they used."""
+    referrer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='referrals_made')
+    referred = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='referred_by_relationship')
+    code_used = models.CharField(max_length=24)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['referrer', '-created_at']),
+            models.Index(fields=['code_used']),
+        ]
+
+    def __str__(self):
+        return f"{self.referrer} referred {self.referred}"
+
+
+class ReferralEvent(models.Model):
+    SIGNUP_VERIFIED = 'signup_verified'
+    COURSE_PURCHASE = 'course_purchase'
+    MATERIAL_PURCHASE = 'material_purchase'
+    POINTS_REDEEMED = 'points_redeemed'
+
+    EVENT_CHOICES = [
+        (SIGNUP_VERIFIED, 'Signup Verified'),
+        (COURSE_PURCHASE, 'Course Purchase'),
+        (MATERIAL_PURCHASE, 'Material Purchase'),
+        (POINTS_REDEEMED, 'Points Redeemed'),
+    ]
+
+    referrer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='referral_events')
+    referred = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='referral_events_as_referred')
+    event_type = models.CharField(max_length=32, choices=EVENT_CHOICES)
+    points = models.DecimalField(max_digits=12, decimal_places=2, help_text="Positive for awards, negative for redemptions")
+    course = models.ForeignKey(Course, on_delete=models.SET_NULL, null=True, blank=True, related_name='referral_events')
+    material_id = models.UUIDField(null=True, blank=True, db_index=True)
+    payment = models.ForeignKey(Payment, on_delete=models.SET_NULL, null=True, blank=True, related_name='referral_events')
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['referrer', '-created_at']),
+            models.Index(fields=['event_type', '-created_at']),
+            models.Index(fields=['referred', 'event_type']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['referred', 'event_type'],
+                condition=models.Q(event_type='signup_verified'),
+                name='unique_referral_signup_verified',
+            ),
+            models.UniqueConstraint(
+                fields=['referred', 'event_type', 'course'],
+                condition=models.Q(event_type='course_purchase'),
+                name='unique_referral_course_purchase',
+            ),
+            models.UniqueConstraint(
+                fields=['referred', 'event_type', 'material_id'],
+                condition=models.Q(event_type='material_purchase'),
+                name='unique_referral_material_purchase',
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.event_type}: {self.points} for {self.referrer}"
 
 
 class FlutterwaveSubAccount(models.Model):

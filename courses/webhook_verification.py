@@ -16,6 +16,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from .models import Payment, Enrollment, DiplomaEnrollment, ActivationUnlock
+from .referral_utils import award_course_purchase, award_material_purchase
 from cbt.models import Subject
 from .paystack_utils import PaystackClient
 from .flutterwave_utils import FlutterwaveClient
@@ -182,14 +183,40 @@ class PaystackWebhookVerifier:
                 course=payment.course,
                 defaults={'purchased': True, 'purchased_at': timezone.now()}
             )
+            award_course_purchase(payment)
         elif payment.kind == Payment.KIND_DIPLOMA and payment.diploma:
             DiplomaEnrollment.objects.update_or_create(
                 user=payment.user,
                 diploma=payment.diploma,
                 defaults={'purchased': True, 'purchased_at': timezone.now()}
             )
+        elif payment.kind == Payment.KIND_MATERIAL:
+            PaystackWebhookVerifier._handle_material_payment(payment)
         elif payment.kind == Payment.KIND_UNLOCK:
             PaystackWebhookVerifier._handle_unlock_payment(payment)
+
+    @staticmethod
+    def _handle_material_payment(payment: Payment):
+        try:
+            from materials.models import Material, MaterialPurchase
+            material_id = None
+            if payment.provider_reference:
+                try:
+                    payload = json.loads(payment.provider_reference)
+                    material_id = payload.get('material_id') if isinstance(payload, dict) else None
+                except Exception:
+                    material_id = payment.provider_reference
+            if not material_id:
+                return
+            material = Material.objects.get(id=material_id)
+            MaterialPurchase.objects.update_or_create(
+                user=payment.user,
+                material=material,
+                defaults={'payment': payment}
+            )
+            award_material_purchase(payment, material)
+        except Exception as exc:
+            logger.error(f"Failed to process material webhook referral/access for payment {payment.id}: {str(exc)}")
 
 
 class FlutterwaveWebhookVerifier:
@@ -320,6 +347,7 @@ class FlutterwaveWebhookVerifier:
                 course=payment.course,
                 defaults={'purchased': True, 'purchased_at': timezone.now()}
             )
+            award_course_purchase(payment)
         elif payment.kind == Payment.KIND_DIPLOMA and payment.diploma:
             DiplomaEnrollment.objects.update_or_create(
                 user=payment.user,
