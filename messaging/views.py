@@ -242,12 +242,171 @@ class ContactAPIView(APIView):
         if not recipients:
             return Response({'detail': 'No admin email configured'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+        # Convert newlines to <br> for HTML email display, but keep the raw message for plaintext
+        formatted_message = message.replace('\n', '<br>')
+        
+        # Determine a human readable title
+        human_type = message_type.replace('_', ' ').title()
+
         html = f"""
-            <p><strong>From:</strong> {name} &lt;{email}&gt;</p>
-            <p><strong>Phone:</strong> {phone or 'N/A'}</p>
-            <p><strong>Type:</strong> {message_type}</p>
-            <hr/>
-            <p>{message}</p>
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>{subject}</title>
+            <style>
+                body {{
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                    background-color: #f9fafb;
+                    margin: 0;
+                    padding: 20px 0;
+                }}
+                .container {{
+                    width: 100%;
+                    max-width: 600px;
+                    margin: 0 auto;
+                    background-color: #ffffff;
+                    border-radius: 8px;
+                    overflow: hidden;
+                    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+                    border: 1px solid #f3f4f6;
+                }}
+                .header {{
+                    background-color: #ca8a04; /* Brand Yellow/Orange */
+                    color: #ffffff;
+                    padding: 25px 20px;
+                    text-align: center;
+                }}
+                .header h2 {{
+                    margin: 0;
+                    font-size: 24px;
+                    font-weight: 700;
+                    letter-spacing: 0.5px;
+                }}
+                .header p {{
+                    margin: 8px 0 0;
+                    font-size: 14px;
+                    opacity: 0.9;
+                }}
+                .content {{
+                    padding: 30px;
+                    color: #374151;
+                    line-height: 1.6;
+                }}
+                .details-table {{
+                    width: 100%;
+                    border-collapse: collapse;
+                    margin-bottom: 25px;
+                    table-layout: fixed;
+                }}
+                .details-table th, .details-table td {{
+                    padding: 12px 10px;
+                    border-bottom: 1px solid #f3f4f6;
+                    text-align: left;
+                    font-size: 15px;
+                    word-wrap: break-word;
+                    overflow-wrap: break-word;
+                    word-break: break-word;
+                }}
+                .details-table th {{
+                    width: 35%;
+                    color: #6b7280;
+                    font-weight: 600;
+                }}
+                .details-table td {{
+                    color: #111827;
+                    font-weight: 500;
+                }}
+                .message-box {{
+                    background-color: #fefce8;
+                    border-left: 4px solid #ca8a04;
+                    padding: 20px;
+                    margin-top: 10px;
+                    border-radius: 0 8px 8px 0;
+                    font-size: 15px;
+                    word-wrap: break-word;
+                    overflow-wrap: break-word;
+                    word-break: break-word;
+                }}
+                .footer {{
+                    background-color: #f9fafb;
+                    color: #9ca3af;
+                    text-align: center;
+                    padding: 20px;
+                    font-size: 13px;
+                    border-top: 1px solid #f3f4f6;
+                }}
+                .badge {{
+                    background-color: #fef08a;
+                    color: #854d0e;
+                    padding: 4px 10px;
+                    border-radius: 12px;
+                    font-size: 12px;
+                    font-weight: 700;
+                    text-transform: uppercase;
+                }}
+                
+                @media only screen and (max-width: 600px) {{
+                    .container {{
+                        width: 100% !important;
+                        border-radius: 0 !important;
+                    }}
+                    .content {{
+                        padding: 20px !important;
+                    }}
+                    .details-table th {{
+                        width: 40% !important;
+                        font-size: 14px !important;
+                    }}
+                    .details-table td {{
+                        font-size: 14px !important;
+                    }}
+                }}
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <h2>LightHub Academy</h2>
+                    <p>New {human_type} Received</p>
+                </div>
+                <div class="content">
+                    <table class="details-table">
+                        <tr>
+                            <th>Sender Name</th>
+                            <td>{name}</td>
+                        </tr>
+                        <tr>
+                            <th>Email Address</th>
+                            <td><a href="mailto:{email}" style="color: #ca8a04; text-decoration: none;">{email}</a></td>
+                        </tr>
+                        <tr>
+                            <th>Phone Number</th>
+                            <td>{phone or 'Not Provided'}</td>
+                        </tr>
+                        <tr>
+                            <th>Submission Type</th>
+                            <td><span class="badge">{message_type.replace('_', ' ')}</span></td>
+                        </tr>
+                        <tr>
+                            <th>Subject</th>
+                            <td>{subject}</td>
+                        </tr>
+                    </table>
+                    
+                    <h3 style="margin: 0 0 10px 0; color: #111827; font-size: 18px;">Message Details</h3>
+                    <div class="message-box">
+                        {formatted_message}
+                    </div>
+                </div>
+                <div class="footer">
+                    &copy; LightHub Academy Admin Portal<br>
+                    This is an automated system notification. Please do not reply directly to this email.
+                </div>
+            </div>
+        </body>
+        </html>
         """
 
         try:
