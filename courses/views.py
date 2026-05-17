@@ -141,7 +141,20 @@ class LessonViewSet(viewsets.ModelViewSet):
         module = serializer.validated_data.get('module')
         if module and module.course.creator != self.request.user and not self.request.user.is_staff:
             raise permissions.PermissionDenied('You do not own this module/course')
-        serializer.save()
+        lesson = serializer.save()
+        if lesson.video_s3 and lesson.video_s3.duration:
+            # Add duration from video automatically
+            lesson.duration_minutes = max(1, int(lesson.video_s3.duration / 60))
+            lesson.save(update_fields=['duration_minutes'])
+
+    def perform_update(self, serializer):
+        module = serializer.validated_data.get('module')
+        if module and module.course.creator != self.request.user and not self.request.user.is_staff:
+            raise permissions.PermissionDenied('You do not own this module/course')
+        lesson = serializer.save()
+        if lesson.video_s3 and lesson.video_s3.duration:
+            lesson.duration_minutes = max(1, int(lesson.video_s3.duration / 60))
+            lesson.save(update_fields=['duration_minutes'])
 
 class LessonMediaUploadView(APIView):
     permission_classes = [IsCreatorOrTeacherOrAdmin, permissions.IsAuthenticated]
