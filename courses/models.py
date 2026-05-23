@@ -1070,7 +1070,7 @@ class LegalDocument(models.Model):
         ('specific', 'Specific Recipients'),
     ]
     
-    document_type = models.CharField(max_length=50, choices=DOCUMENT_TYPE_CHOICES, unique=True)
+    document_type = models.CharField(max_length=50, choices=DOCUMENT_TYPE_CHOICES)
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     document_file = models.CharField(
