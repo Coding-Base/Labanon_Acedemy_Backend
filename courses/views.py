@@ -68,7 +68,13 @@ class CourseViewSet(viewsets.ModelViewSet):
     ordering_fields = ['created_at', 'price', 'title']
 
     def get_queryset(self):
-        return Course.objects.all().order_by('-created_at')
+        if IsMasterAdmin().has_permission(self.request, self):
+            return Course.objects.all().order_by('-created_at')
+        if self.request.user.is_authenticated:
+            return Course.objects.filter(
+                Q(creator=self.request.user) | Q(published=True)
+            ).order_by('-created_at')
+        return Course.objects.filter(published=True).order_by('-created_at')
 
     def perform_create(self, serializer):
         title = serializer.validated_data.get('title', '')

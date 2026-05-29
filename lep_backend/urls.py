@@ -2,6 +2,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from django.contrib import admin
 from users.views import DashboardView
+from courses.views import AdminSignatureView
 from django.conf import settings
 from django.conf.urls.static import static
 from rest_framework.routers import DefaultRouter
@@ -25,6 +26,7 @@ sitemaps = {
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/users/', include('users.urls')),
+    path('api/admin/signature/', AdminSignatureView.as_view(), name='admin-signature-override'),
     path('api/admin/', include('users.urls')),  # Admin routes
     path('api/dashboard/', DashboardView.as_view(), name='dashboard'),
     # Register lessons before the generic `api/` courses include so
