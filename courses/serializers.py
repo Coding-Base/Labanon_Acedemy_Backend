@@ -19,14 +19,24 @@ from .models import Visit
 class InstitutionSerializer(serializers.ModelSerializer):
     owner_username = serializers.CharField(source='owner.username', read_only=True)
     courses_count = serializers.SerializerMethodField()
+    # Read-only computed fields that return absolute URLs
     logo_image = serializers.SerializerMethodField()
     signature_image = serializers.SerializerMethodField()
+    # Write-only fields to accept raw URLs during PATCH/PUT
+    logo_image_input = serializers.CharField(
+        write_only=True, required=False, allow_blank=True, source='logo_image'
+    )
+    signature_image_input = serializers.CharField(
+        write_only=True, required=False, allow_blank=True, source='signature_image'
+    )
 
     class Meta:
         model = Institution
         fields = [
             'id', 'owner_username', 'name', 'description', 'is_active', 
-            'courses_count', 'created_at', 'signer_name', 'signer_position','signature_image', 'logo_image'
+            'courses_count', 'created_at', 'signer_name', 'signer_position',
+            'signature_image', 'logo_image',
+            'signature_image_input', 'logo_image_input',
         ]
         read_only_fields = [
             'id', 'owner_username', 'courses_count', 'created_at'
