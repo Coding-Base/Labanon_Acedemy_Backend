@@ -756,8 +756,19 @@ class AdminEmailBroadcastView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
             
-        # Trigger Celery task
+        # Trigger email broadcast in a background thread to avoid blocking the HTTP response
+        # This replaces Celery, matching the system's existing email logic.
+        import threading
+        from django.db import close_old_connections
         from .tasks import send_broadcast_email_task
-        send_broadcast_email_task.delay(audience, subject, message)
+        
+        def run_broadcast():
+            try:
+                send_broadcast_email_task(audience, subject, message)
+            finally:
+                close_old_connections()
+                
+        thread = threading.Thread(target=run_broadcast)
+        thread.start()
         
         return Response({'status': 'Broadcast task queued successfully.'}, status=status.HTTP_200_OK)

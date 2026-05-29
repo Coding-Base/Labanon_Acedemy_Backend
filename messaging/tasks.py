@@ -1,5 +1,5 @@
 import logging
-from celery import shared_task
+
 from django.core.mail import send_mail
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -7,7 +7,6 @@ from django.contrib.auth import get_user_model
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
-@shared_task
 def send_broadcast_email_task(audience, subject, message):
     """
     Sends an email to all users of a specific audience (or all users) as a background task.
