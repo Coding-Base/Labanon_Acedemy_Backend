@@ -80,6 +80,7 @@ SECURE_HSTS_PRELOAD = not DEBUG
 
 # Force HTTPS redirect in production
 SECURE_SSL_REDIRECT = not DEBUG
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 # Referrer policy
 SECURE_REFERRER_POLICY = 'no-referrer-when-downgrade'
