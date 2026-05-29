@@ -62,8 +62,10 @@ class FlutterwaveClient:
                 raise FlutterwaveError(f"Unsupported HTTP method: {method}")
 
             # Try to parse JSON body, fallback to text
+            is_json = False
             try:
                 body = response.json()
+                is_json = True
             except ValueError:
                 body = response.text
 
@@ -72,7 +74,11 @@ class FlutterwaveClient:
 
             if not response.ok:
                 # Non-2xx responses should raise a readable error
-                raise FlutterwaveError(f"HTTP {response.status_code}: {body}")
+                if not is_json and isinstance(body, str) and ('<html' in body.lower() or '<!doctype' in body.lower()):
+                    error_msg = f"HTTP {response.status_code}: Upstream gateway error (Service Unavailable)"
+                else:
+                    error_msg = f"HTTP {response.status_code}: {body}"
+                raise FlutterwaveError(error_msg)
 
             return body
         except requests.exceptions.RequestException as e:

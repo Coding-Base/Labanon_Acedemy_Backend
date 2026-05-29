@@ -47,14 +47,26 @@ class PaystackClient:
             return response.json()
         except requests.exceptions.RequestException as e:
             error_body = ''
+            is_json = False
             try:
-                error_body = e.response.json() if hasattr(e, 'response') and e.response is not None else {}
+                if hasattr(e, 'response') and e.response is not None:
+                    error_body = e.response.json()
+                    is_json = True
             except:
-                error_body = str(e)
+                if hasattr(e, 'response') and e.response is not None:
+                    error_body = e.response.text
+                else:
+                    error_body = str(e)
             status_code = e.response.status_code if hasattr(e, 'response') and e.response else 'N/A'
-            logger.error(f"Paystack API error: {str(e)}, Status: {status_code}, Response: {error_body}")
+            
+            if not is_json and isinstance(error_body, str) and ('<html' in error_body.lower() or '<!doctype' in error_body.lower()):
+                error_msg = "Upstream gateway error (Service Unavailable)"
+            else:
+                error_msg = str(error_body)
+
+            logger.error(f"Paystack API error: {str(e)}, Status: {status_code}, Response: {error_msg}")
             # Raise with the parsed response body when available to help debugging
-            raise PaystackError(f"Paystack API error: Status {status_code}, Response: {error_body}")
+            raise PaystackError(f"Paystack API error: Status {status_code}, Response: {error_msg}")
     
     def initialize_payment(self, email, amount, reference, metadata=None, callback_url=None, recipient_code=None, split_code=None, currency=None):
         """
