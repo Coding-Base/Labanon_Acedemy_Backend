@@ -714,3 +714,50 @@ class UserSearchView(APIView):
             })
         
         return Response({'results': result})
+
+
+class AdminEmailBroadcastView(APIView):
+    """
+    Endpoint for admins to broadcast an email to a specific role of users or all users.
+    Triggers a Celery task.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        
+        # Check permissions: User must be an admin OR a subadmin with can_manage_users
+        is_admin = user.is_staff or getattr(user, 'role', None) == 'admin'
+        is_authorized_sub = (
+            hasattr(user, 'subadmin_profile') and 
+            user.subadmin_profile.can_manage_users
+        )
+        
+        if not (is_admin or is_authorized_sub):
+            return Response(
+                {'detail': 'You do not have permission to broadcast emails.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+            
+        audience = request.data.get('audience')
+        subject = request.data.get('subject')
+        message = request.data.get('message')
+        
+        if not all([audience, subject, message]):
+            return Response(
+                {'detail': 'audience, subject, and message are required.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        valid_audiences = ['all', 'student', 'tutor', 'institution']
+        if audience not in valid_audiences:
+            return Response(
+                {'detail': f'Invalid audience. Must be one of {valid_audiences}.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        # Trigger Celery task
+        from .tasks import send_broadcast_email_task
+        send_broadcast_email_task.delay(audience, subject, message)
+        
+        return Response({'status': 'Broadcast task queued successfully.'}, status=status.HTTP_200_OK)
