@@ -30,8 +30,31 @@ class RateLimitMiddleware:
             return xff.split(',')[0].strip()
         return request.META.get('REMOTE_ADDR')
 
+    def _get_user(self, request):
+        # 1. Try session-based user
+        if hasattr(request, 'user') and request.user.is_authenticated:
+            return request.user
+
+        # 2. Try JWT-based user for API requests
+        auth_header = request.META.get('HTTP_AUTHORIZATION')
+        if auth_header and auth_header.startswith('Bearer '):
+            try:
+                from rest_framework_simplejwt.authentication import JWTAuthentication
+                authenticator = JWTAuthentication()
+                auth_res = authenticator.authenticate(request)
+                if auth_res:
+                    return auth_res[0]
+            except Exception:
+                pass
+        return None
+
     def __call__(self, request):
         if not self.cache:
+            return self.get_response(request)
+
+        # Exempt authenticated staff and superusers from rate limiting
+        user = self._get_user(request)
+        if user and user.is_authenticated and (user.is_staff or user.is_superuser):
             return self.get_response(request)
 
         ip = self._get_ip(request)

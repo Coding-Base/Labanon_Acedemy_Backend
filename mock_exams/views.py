@@ -46,7 +46,7 @@ class MasterAdminMockExamViewSet(viewsets.ModelViewSet):
     ordering = ['-created_at']
     
     def get_queryset(self):
-        return CustomMockExam.objects.prefetch_related('subjects', 'attempts').all()
+        return CustomMockExam.objects.prefetch_related('subjects__questions__options', 'attempts').all()
     
     def get_serializer_class(self):
         if self.action == 'retrieve':

@@ -49,7 +49,6 @@ MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'lep_backend.middleware.api_json_exceptions.ApiJsonExceptionMiddleware',
     'django.middleware.security.SecurityMiddleware',
-    'lep_backend.middleware.rate_limit.RateLimitMiddleware',
     'lep_backend.middleware.security_headers.SecurityHeadersMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -58,6 +57,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'lep_backend.middleware.rate_limit.RateLimitMiddleware',
     'lep_backend.middleware.CloudFrontOriginMiddleware',
 ]
 
@@ -86,7 +86,7 @@ SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 SECURE_REFERRER_POLICY = 'no-referrer-when-downgrade'
 
 # Rate limiting (middleware) defaults - IP based protection
-RATE_LIMIT_MAX_REQUESTS = int(os.environ.get('RATE_LIMIT_MAX_REQUESTS', '300'))
+RATE_LIMIT_MAX_REQUESTS = int(os.environ.get('RATE_LIMIT_MAX_REQUESTS', '1000'))
 RATE_LIMIT_WINDOW_SECONDS = int(os.environ.get('RATE_LIMIT_WINDOW_SECONDS', '300'))
 RATE_LIMIT_BAN_SECONDS = int(os.environ.get('RATE_LIMIT_BAN_SECONDS', '600'))
 
