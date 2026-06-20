@@ -114,6 +114,7 @@ class Course(models.Model):
     meeting_link = models.CharField(max_length=512, blank=True)
     published = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
+    views_count = models.PositiveIntegerField(default=0, help_text='Number of times the course detail has been viewed')
 
     def __str__(self):
         return self.title

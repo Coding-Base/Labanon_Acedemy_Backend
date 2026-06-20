@@ -67,6 +67,23 @@ class CourseViewSet(viewsets.ModelViewSet):
     filterset_fields = ['published', 'price', 'institution', 'creator']
     ordering_fields = ['created_at', 'price', 'title']
 
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post'], permission_classes=[permissions.AllowAny])
+    def increment_views(self, request, pk=None):
+        """Atomically increment the course views count."""
+        try:
+            course = Course.objects.get(pk=pk)
+        except Course.DoesNotExist:
+            return Response({'detail': 'Course not found'}, status=404)
+        
+        course.views_count = models.F('views_count') + 1
+        course.save(update_fields=['views_count'])
+        return Response({'status': 'views incremented'})
+
     def get_queryset(self):
         if IsMasterAdmin().has_permission(self.request, self):
             return Course.objects.all().order_by('-created_at')

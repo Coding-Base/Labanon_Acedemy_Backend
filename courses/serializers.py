@@ -133,7 +133,7 @@ class CourseSerializer(serializers.ModelSerializer):
             'published', 'creator', 'creator_username', 
             'institution', 'institution_name',
             'course_type', 'level', 'outcome', 'required_tools',
-            'created_at', 'modules', 'stats', 
+            'created_at', 'modules', 'stats', 'views_count',
             'start_date', 'end_date', 'meeting_time', 'meeting_place', 'meeting_link'
         ]
 
@@ -151,7 +151,8 @@ class CourseSerializer(serializers.ModelSerializer):
             'rating': round(avg_rating, 1),
             'ratings_count': ratings_count,
             'students': students_count,
-            'duration': duration_str
+            'duration': duration_str,
+            'views': obj.views_count
         }
 
     def _normalize_path(self, raw: str) -> str:
