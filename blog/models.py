@@ -3,9 +3,29 @@ from django.conf import settings
 from django.utils.text import slugify
 
 
+class BlogCategory(models.Model):
+    """Category model for blog posts."""
+    name = models.CharField(max_length=100, unique=True)
+    slug = models.SlugField(max_length=100, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['name']
+        verbose_name_plural = 'Blog Categories'
+
+    def __str__(self):
+        return self.name
+
+    def save(self, *args, **kwargs):
+        if not self.slug:
+            self.slug = slugify(self.name)
+        super().save(*args, **kwargs)
+
+
 class Blog(models.Model):
     """Blog post model for platform news and announcements"""
     author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='blog_posts')
+    category = models.ForeignKey(BlogCategory, on_delete=models.SET_NULL, null=True, blank=True, related_name='blogs')
     title = models.CharField(max_length=255)
     slug = models.SlugField(unique=True, max_length=255)
     content = models.TextField()
@@ -20,6 +40,7 @@ class Blog(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     published_at = models.DateTimeField(null=True, blank=True)
+
     
     # Engagement stats
     likes_count = models.IntegerField(default=0)

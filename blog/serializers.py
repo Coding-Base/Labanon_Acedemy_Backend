@@ -1,9 +1,21 @@
 from rest_framework import serializers
-from .models import Blog, BlogComment, BlogLike, BlogShare
+from .models import Blog, BlogComment, BlogLike, BlogShare, BlogCategory
 import logging
 import os
 import uuid
 import re
+
+class BlogCategorySerializer(serializers.ModelSerializer):
+    blogs_count = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = BlogCategory
+        fields = ['id', 'name', 'slug', 'blogs_count', 'created_at']
+        read_only_fields = ['id', 'slug', 'created_at']
+
+    def get_blogs_count(self, obj):
+        return obj.blogs.filter(is_published=True).count()
+
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import UploadedFile
@@ -58,6 +70,8 @@ class BlogSerializer(serializers.ModelSerializer):
     # Accept uploaded image via a write-only ImageField to allow multipart/form-data
     image_file = serializers.ImageField(write_only=True, required=False)
     author_username = serializers.CharField(source='author.username', read_only=True)
+    category_name = serializers.CharField(source='category.name', read_only=True, allow_null=True)
+    category_slug = serializers.CharField(source='category.slug', read_only=True, allow_null=True)
     user_liked = serializers.SerializerMethodField()
     comments = serializers.SerializerMethodField()
 
@@ -65,9 +79,11 @@ class BlogSerializer(serializers.ModelSerializer):
         model = Blog
         # include 'image_file' (write-only) so multipart uploads validate
         fields = ['id', 'title', 'slug', 'content', 'image', 'image_file', 'image_description', 'excerpt', 'is_published', 'author', 'author_username', 
+                  'category', 'category_name', 'category_slug',
                   'created_at', 'updated_at', 'published_at', 'likes_count', 'comments_count', 'shares_count', 
                   'user_liked', 'comments', 'meta_title', 'meta_description', 'meta_keywords']
         read_only_fields = ['slug', 'author', 'created_at', 'updated_at', 'likes_count', 'comments_count', 'shares_count']
+
 
     def get_user_liked(self, obj):
         request = self.context.get('request')

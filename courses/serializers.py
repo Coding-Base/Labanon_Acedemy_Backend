@@ -12,8 +12,10 @@ from .models import (
     CartItem, Diploma, DiplomaEnrollment, Portfolio, 
     PortfolioGalleryItem, Certificate, Review, GospelVideo,
     ModuleQuiz, QuizQuestion, QuizOption, ModuleQuizAttempt, QuizAnswer,
-    VerificationDocument, TutorVerificationDocument, LegalDocument, ComplianceSubmission
+    VerificationDocument, TutorVerificationDocument, LegalDocument, ComplianceSubmission,
+    SeriesItem
 )
+
 from .models import Visit
 
 class InstitutionSerializer(serializers.ModelSerializer):
@@ -108,8 +110,24 @@ class ModuleSerializer(serializers.ModelSerializer):
             return None
 
 
+class SeriesSubCourseSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Course
+        fields = ['id', 'title', 'slug', 'image', 'price', 'level', 'description', 'course_type']
+
+
+class SeriesItemSerializer(serializers.ModelSerializer):
+    course_details = SeriesSubCourseSerializer(source='course', read_only=True)
+
+    class Meta:
+        model = SeriesItem
+        fields = ['id', 'series', 'course', 'course_details', 'order', 'created_at']
+        read_only_fields = ['series', 'created_at']
+
+
 class CourseSerializer(serializers.ModelSerializer):
     modules = ModuleSerializer(many=True, read_only=True)
+    series_items = SeriesItemSerializer(many=True, read_only=True)
     creator = serializers.StringRelatedField()
     creator_username = serializers.CharField(source='creator.username', read_only=True)
     institution_name = serializers.CharField(source='institution.name', read_only=True, allow_null=True)
@@ -131,11 +149,12 @@ class CourseSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'title', 'slug', 'image', 'image_upload', 'description', 'price', 
             'published', 'creator', 'creator_username', 
-            'institution', 'institution_name',
+            'institution', 'institution_name', 'is_series', 'series_items',
             'course_type', 'level', 'outcome', 'required_tools',
             'created_at', 'modules', 'stats', 'views_count',
             'start_date', 'end_date', 'meeting_time', 'meeting_place', 'meeting_link'
         ]
+
 
     def get_stats(self, obj):
         reviews = obj.reviews.all()
@@ -233,6 +252,21 @@ class EnrollmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Enrollment
         fields = ['id', 'course', 'course_id', 'purchased', 'purchased_at']
+
+    def validate(self, attrs):
+        user = self.context['request'].user
+        course = attrs.get('course')
+        if Enrollment.objects.filter(user=user, course=course, purchased=True).exists():
+            raise serializers.ValidationError("You are already enrolled in this course.")
+        return attrs
+
+    def create(self, validated_data):
+        user = self.context['request'].user
+        course = validated_data.get('course')
+        enrollment, created = Enrollment.objects.get_or_create(user=user, course=course)
+        return enrollment
+
+
 
 
 class PaymentSerializer(serializers.ModelSerializer):

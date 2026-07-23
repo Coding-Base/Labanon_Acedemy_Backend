@@ -23,7 +23,7 @@ from messaging.models import Message
 from .models import (
     Institution, Course, Module, Lesson, Enrollment, CartItem, 
     Diploma, DiplomaEnrollment, Portfolio, PortfolioGalleryItem, 
-    Certificate, Payment, GospelVideo,
+    Certificate, Payment, GospelVideo, SeriesItem,
     ModuleQuiz, QuizQuestion, QuizOption, ModuleQuizAttempt, QuizAnswer,
     LegalDocument
 )
@@ -32,7 +32,7 @@ from .serializers import (
     LessonSerializer, EnrollmentSerializer, CartItemSerializer, 
     DiplomaSerializer, DiplomaEnrollmentSerializer, PortfolioSerializer, 
     PortfolioGalleryItemSerializer, CertificateSerializer, PaymentSerializer,
-    GospelVideoSerializer,
+    GospelVideoSerializer, SeriesItemSerializer,
     ModuleQuizSerializer, QuizQuestionSerializer, QuizOptionSerializer,
     ModuleQuizAttemptSerializer, ModuleQuizAttemptSubmitSerializer,
     LegalDocumentSerializer
@@ -86,12 +86,22 @@ class CourseViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         if IsMasterAdmin().has_permission(self.request, self):
-            return Course.objects.all().order_by('-created_at')
-        if self.request.user.is_authenticated:
-            return Course.objects.filter(
+            qs = Course.objects.all().order_by('-created_at')
+        elif self.request.user.is_authenticated:
+            qs = Course.objects.filter(
                 Q(creator=self.request.user) | Q(published=True)
             ).order_by('-created_at')
-        return Course.objects.filter(published=True).order_by('-created_at')
+        else:
+            qs = Course.objects.filter(published=True).order_by('-created_at')
+
+        # Filter by is_series query param
+        is_series = self.request.query_params.get('is_series')
+        if is_series is not None:
+            val = is_series.lower() in ('true', '1')
+            qs = qs.filter(is_series=val)
+
+        return qs
+
 
     def perform_create(self, serializer):
         title = serializer.validated_data.get('title', '')
@@ -106,11 +116,39 @@ class CourseViewSet(viewsets.ModelViewSet):
         # Automatically link the user's institution if they have one
         institution = Institution.objects.filter(owner=self.request.user).first()
         
-        serializer.save(
+        course = serializer.save(
             creator=self.request.user, 
             slug=slug,
             institution=institution 
         )
+        self._update_series_items(course)
+
+    def perform_update(self, serializer):
+        course = serializer.save()
+        self._update_series_items(course)
+
+    def _update_series_items(self, course):
+        if not course.is_series:
+            return
+        
+        sub_course_ids = None
+        if hasattr(self.request.data, 'getlist'):
+            sub_course_ids = self.request.data.getlist('sub_course_ids')
+        
+        if not sub_course_ids:
+            raw_ids = self.request.data.get('sub_course_ids')
+            if raw_ids is not None:
+                sub_course_ids = raw_ids if isinstance(raw_ids, list) else [raw_ids]
+        
+        if sub_course_ids:
+            SeriesItem.objects.filter(series=course).delete()
+            for idx, sc_id in enumerate(sub_course_ids):
+                try:
+                    sub_c = Course.objects.get(id=sc_id)
+                    SeriesItem.objects.create(series=course, course=sub_c, order=idx)
+                except (Course.DoesNotExist, ValueError):
+                    pass
+
 
     @action(detail=True, methods=['get'], permission_classes=[IsMasterAdmin])
     def admin_detail(self, request, pk=None):
@@ -178,6 +216,24 @@ class LessonViewSet(viewsets.ModelViewSet):
         if lesson.video_s3 and lesson.video_s3.duration:
             lesson.duration_minutes = max(1, int(lesson.video_s3.duration / 60))
             lesson.save(update_fields=['duration_minutes'])
+
+    @action(detail=False, methods=['post'], permission_classes=[IsCreatorOrTeacherOrAdmin])
+    def reorder(self, request):
+        """Reorder lessons within a module. Expects payload: {'lessons': [{'id': 1, 'order': 0}, {'id': 2, 'order': 1}]}"""
+        items = request.data.get('lessons') or request.data.get('items')
+        if not isinstance(items, list):
+            return Response({'detail': 'lessons list is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        updated_count = 0
+        for item in items:
+            lesson_id = item.get('id')
+            new_order = item.get('order')
+            if lesson_id is not None and new_order is not None:
+                Lesson.objects.filter(id=lesson_id).update(order=new_order)
+                updated_count += 1
+        
+        return Response({'status': 'success', 'updated_count': updated_count})
+
 
 class LessonMediaUploadView(APIView):
     permission_classes = [IsCreatorOrTeacherOrAdmin, permissions.IsAuthenticated]
@@ -292,8 +348,13 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
     pagination_class = StandardResultsSetPagination
 
     def get_queryset(self):
-        # FIX: Added .order_by('-purchased_at') to ensure consistent pagination
-        return Enrollment.objects.filter(user=self.request.user).order_by('-purchased_at')
+        qs = Enrollment.objects.filter(user=self.request.user).order_by('-purchased_at')
+        is_series = self.request.query_params.get('is_series')
+        if is_series is not None:
+            val = is_series.lower() in ('true', '1')
+            qs = qs.filter(course__is_series=val)
+        return qs
+
 
     def perform_create(self, serializer):
         course = serializer.validated_data.get('course')
@@ -303,14 +364,24 @@ class EnrollmentViewSet(viewsets.ModelViewSet):
             enrollment.purchased = True
             enrollment.purchased_at = timezone.now()
             enrollment.save()
-            Payment.objects.create(
+            
+            payment_exists = Payment.objects.filter(
                 user=user,
                 course=course,
-                amount=0,
-                platform_fee=0,
-                kind=Payment.KIND_COURSE,
                 status=Payment.SUCCESS,
-            )
+                kind=Payment.KIND_COURSE
+            ).exists()
+            
+            if not payment_exists:
+                Payment.objects.create(
+                    user=user,
+                    course=course,
+                    amount=0,
+                    platform_fee=0,
+                    kind=Payment.KIND_COURSE,
+                    status=Payment.SUCCESS,
+                )
+
 
     @action(detail=True, methods=['post'])
     def purchase(self, request, pk=None):
@@ -1077,8 +1148,34 @@ class CertificateViewSet(viewsets.ReadOnlyModelViewSet):
                 'completion_date': completion_date if completion_date else timezone.now().date()
             }
         )
+
+        # Check if this sub-course belongs to any published umbrella Series
+        series_certificates_created = []
+        parent_series_items = SeriesItem.objects.filter(course=course, series__published=True)
+        for s_item in parent_series_items:
+            series_course = s_item.series
+            sub_course_ids = list(series_course.series_items.values_list('course_id', flat=True))
+            if sub_course_ids:
+                user_cert_course_ids = set(Certificate.objects.filter(user=request.user, course_id__in=sub_course_ids).values_list('course_id', flat=True))
+                if set(sub_course_ids).issubset(user_cert_course_ids):
+                    series_cert, s_created = Certificate.objects.get_or_create(
+                        user=request.user,
+                        course=series_course,
+                        defaults={
+                            'certificate_id': self._generate_certificate_id(),
+                            'completion_date': completion_date if completion_date else timezone.now().date()
+                        }
+                    )
+                    if s_created:
+                        series_certificates_created.append(CertificateSerializer(series_cert, context={'request': request}).data)
+
         serializer = self.get_serializer(certificate)
-        return Response(serializer.data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+        res_data = serializer.data
+        if series_certificates_created:
+            res_data['series_certificates_created'] = series_certificates_created
+
+        return Response(res_data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
 
     @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
     def mark_downloaded(self, request, pk=None):

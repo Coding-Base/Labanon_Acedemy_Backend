@@ -143,6 +143,24 @@ class Course(models.Model):
         minutes = total_minutes % 60
         return f"{int(hours)}h {int(minutes)}m"
 
+    is_series = models.BooleanField(default=False, help_text='Designates this course as an umbrella Series course')
+
+
+class SeriesItem(models.Model):
+    """Sub-course entry under an umbrella Series course."""
+    series = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='series_items')
+    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='parent_series')
+    order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['order']
+        unique_together = ('series', 'course')
+
+    def __str__(self):
+        return f"{self.series.title} -> {self.course.title} (Order: {self.order})"
+
+
 
 class Module(models.Model):
     course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name='modules')
