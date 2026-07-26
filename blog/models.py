@@ -37,6 +37,9 @@ class Blog(models.Model):
     meta_description = models.CharField(max_length=320, blank=True)
     meta_keywords = models.CharField(max_length=512, blank=True)
     is_published = models.BooleanField(default=False)
+    is_featured = models.BooleanField(default=False)
+    is_trending = models.BooleanField(default=False)
+    is_popular = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     published_at = models.DateTimeField(null=True, blank=True)
@@ -57,6 +60,26 @@ class Blog(models.Model):
         if not self.slug:
             self.slug = slugify(self.title)
         super().save(*args, **kwargs)
+
+
+class BlogAd(models.Model):
+    """Banners / Ads that display on the blog page"""
+    title = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    badge_text = models.CharField(max_length=50, blank=True, help_text="e.g. FREE DOWNLOAD or FEATURED COURSE")
+    bullets = models.TextField(blank=True, help_text="Comma-separated bullet points (e.g. Python, SQL, Power BI)")
+    button_text = models.CharField(max_length=50, default="Download Free")
+    button_link = models.CharField(max_length=512)
+    image = models.CharField(max_length=512, blank=True)  # URL or uploaded file path
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.title
 
 
 class BlogComment(models.Model):

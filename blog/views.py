@@ -5,8 +5,11 @@ from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.utils import timezone
 from django.db.models import Count, Q
-from .models import Blog, BlogComment, BlogLike, BlogShare, BlogCategory
-from .serializers import BlogSerializer, BlogCommentSerializer, BlogLikeSerializer, BlogShareSerializer, BlogCategorySerializer
+from .models import Blog, BlogComment, BlogLike, BlogShare, BlogCategory, BlogAd
+from .serializers import (
+    BlogSerializer, BlogCommentSerializer, BlogLikeSerializer,
+    BlogShareSerializer, BlogCategorySerializer, BlogAdSerializer
+)
 from users.permissions import IsMasterAdmin
 from django.shortcuts import render, get_object_or_404
 from rest_framework.decorators import api_view, permission_classes, parser_classes
@@ -68,14 +71,29 @@ class BlogViewSet(viewsets.ModelViewSet):
         return [permission() for permission in permission_classes]
 
     def perform_create(self, serializer):
+        is_featured = self.request.data.get('is_featured')
+        if is_featured in [True, 'true', 'True', 1, '1']:
+            Blog.objects.filter(is_featured=True).update(is_featured=False)
         serializer.save(author=self.request.user)
+
+    def perform_update(self, serializer):
+        is_featured = self.request.data.get('is_featured')
+        if is_featured in [True, 'true', 'True', 1, '1']:
+            Blog.objects.filter(is_featured=True).exclude(pk=serializer.instance.pk).update(is_featured=False)
+        serializer.save()
 
     @action(detail=False, methods=['get'])
     def published(self, request):
-        """Get all published blogs with pagination and optional category filtering"""
+        """Get all published blogs with pagination and optional category/section filtering"""
         queryset = Blog.objects.filter(is_published=True)
         cat = request.query_params.get('category')
         search = request.query_params.get('search')
+        
+        # Section filters
+        is_featured = request.query_params.get('is_featured')
+        is_trending = request.query_params.get('is_trending')
+        is_popular = request.query_params.get('is_popular')
+        
         if cat:
             if cat.isdigit():
                 queryset = queryset.filter(category_id=int(cat))
@@ -83,6 +101,13 @@ class BlogViewSet(viewsets.ModelViewSet):
                 queryset = queryset.filter(category__slug=cat)
         if search:
             queryset = queryset.filter(Q(title__icontains=search) | Q(excerpt__icontains=search) | Q(content__icontains=search))
+            
+        if is_featured in ['true', 'True', '1']:
+            queryset = queryset.filter(is_featured=True)
+        if is_trending in ['true', 'True', '1']:
+            queryset = queryset.filter(is_trending=True)
+        if is_popular in ['true', 'True', '1']:
+            queryset = queryset.filter(is_popular=True)
 
         queryset = queryset.order_by('-published_at', '-created_at')
         page = self.paginate_queryset(queryset)
@@ -236,4 +261,24 @@ def upload_blog_image(request):
     saved_path = default_storage.save(filename, ContentFile(file_obj.read()))
     url = default_storage.url(saved_path)
     return Response({'url': url})
+
+
+class BlogAdViewSet(viewsets.ModelViewSet):
+    """Blog Ads API endpoints"""
+    queryset = BlogAd.objects.all()
+    serializer_class = BlogAdSerializer
+    parser_classes = (MultiPartParser, FormParser, JSONParser)
+
+    def get_queryset(self):
+        # Admins see all, others see only active ads
+        if self.request.user and (self.request.user.is_staff or (hasattr(self.request.user, 'role') and self.request.user.role == 'admin')):
+            return BlogAd.objects.all().order_by('-created_at')
+        return BlogAd.objects.filter(is_active=True).order_by('-created_at')
+
+    def get_permissions(self):
+        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+            permission_classes = [IsMasterAdmin]
+        else:
+            permission_classes = [permissions.AllowAny]
+        return [permission() for permission in permission_classes]
 

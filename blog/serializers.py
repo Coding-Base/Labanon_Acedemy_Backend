@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Blog, BlogComment, BlogLike, BlogShare, BlogCategory
+from .models import Blog, BlogComment, BlogLike, BlogShare, BlogCategory, BlogAd
 import logging
 import os
 import uuid
@@ -78,7 +78,8 @@ class BlogSerializer(serializers.ModelSerializer):
     class Meta:
         model = Blog
         # include 'image_file' (write-only) so multipart uploads validate
-        fields = ['id', 'title', 'slug', 'content', 'image', 'image_file', 'image_description', 'excerpt', 'is_published', 'author', 'author_username', 
+        fields = ['id', 'title', 'slug', 'content', 'image', 'image_file', 'image_description', 'excerpt', 'is_published', 
+                  'is_featured', 'is_trending', 'is_popular', 'author', 'author_username', 
                   'category', 'category_name', 'category_slug',
                   'created_at', 'updated_at', 'published_at', 'likes_count', 'comments_count', 'shares_count', 
                   'user_liked', 'comments', 'meta_title', 'meta_description', 'meta_keywords']
@@ -329,3 +330,68 @@ class BlogShareSerializer(serializers.ModelSerializer):
         model = BlogShare
         fields = ['id', 'blog', 'share_platform', 'created_at']
         read_only_fields = ['user', 'created_at']
+
+
+class BlogAdSerializer(serializers.ModelSerializer):
+    image_file = serializers.ImageField(write_only=True, required=False)
+
+    class Meta:
+        model = BlogAd
+        fields = [
+            'id', 'title', 'description', 'badge_text', 'bullets',
+            'button_text', 'button_link', 'image', 'image_file', 'is_active',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def create(self, validated_data):
+        image_file = validated_data.pop('image_file', None)
+        if image_file and isinstance(image_file, UploadedFile):
+            ext = os.path.splitext(image_file.name)[1] or ''
+            filename = f"blog_ads/{uuid.uuid4().hex}{ext}"
+            use_cloudinary = os.environ.get('USE_CLOUDINARY', 'False').lower() in ('1', 'true', 'yes')
+            if use_cloudinary:
+                try:
+                    from cloudinary_storage.storage import MediaCloudinaryStorage
+                    storage = MediaCloudinaryStorage()
+                except ImportError:
+                    storage = default_storage
+            else:
+                storage = default_storage
+            
+            saved_name = storage.save(filename, ContentFile(image_file.read()))
+            try:
+                image_url = storage.url(saved_name)
+            except Exception:
+                image_url = f"{getattr(settings, 'MEDIA_URL', '/media/')}{saved_name}"
+            if image_url.startswith('/') and getattr(settings, 'SITE_URL', None):
+                image_url = f"{settings.SITE_URL.rstrip('/')}{image_url}"
+            validated_data['image'] = image_url
+
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        image_file = validated_data.pop('image_file', None)
+        if image_file and isinstance(image_file, UploadedFile):
+            ext = os.path.splitext(image_file.name)[1] or ''
+            filename = f"blog_ads/{uuid.uuid4().hex}{ext}"
+            use_cloudinary = os.environ.get('USE_CLOUDINARY', 'False').lower() in ('1', 'true', 'yes')
+            if use_cloudinary:
+                try:
+                    from cloudinary_storage.storage import MediaCloudinaryStorage
+                    storage = MediaCloudinaryStorage()
+                except ImportError:
+                    storage = default_storage
+            else:
+                storage = default_storage
+            
+            saved_name = storage.save(filename, ContentFile(image_file.read()))
+            try:
+                image_url = storage.url(saved_name)
+            except Exception:
+                image_url = f"{getattr(settings, 'MEDIA_URL', '/media/')}{saved_name}"
+            if image_url.startswith('/') and getattr(settings, 'SITE_URL', None):
+                image_url = f"{settings.SITE_URL.rstrip('/')}{image_url}"
+            validated_data['image'] = image_url
+
+        return super().update(instance, validated_data)
