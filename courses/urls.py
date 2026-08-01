@@ -16,7 +16,7 @@ from .payment_views import (
     VerifyPaymentView, SubAccountViewSet, ActivationFeeView, ActivationStatusView, AdminActivationFeeView, AdminAnalyticsView,
     TrackPageView, ReferrerStatsView, DailyAnalyticsView,
     RegistrationsView, DownloadsAnalyticsView,
-    PaymentSplitConfigView,
+    PaymentSplitConfigView, ExchangeRateView,
     InitiateFlutterwavePaymentView, VerifyFlutterwavePaymentView, 
     FlutterwaveWebhookView, FlutterwaveSubAccountViewSet, 
     FlutterwaveListBanksView, FlutterwaveVerifyAccountView, PaymentReconciliationView
@@ -59,6 +59,7 @@ urlpatterns = [
     path('analytics/track/', TrackPageView.as_view(), name='analytics-track'),
     path('analytics/referrers/', ReferrerStatsView.as_view(), name='analytics-referrers'),
     path('payments/webhook/', PaystackWebhookView.as_view(), name='paystack-webhook'),
+    path('payments/exchange-rate/', ExchangeRateView.as_view(), name='exchange-rate'),
 
     # Referral system
     path('referrals/me/', MyReferralView.as_view(), name='referrals-me'),

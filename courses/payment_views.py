@@ -571,6 +571,52 @@ def send_successful_payment_emails(payment):
 
 # ==================== VIEWS ====================
 
+class ExchangeRateView(APIView):
+    """Return live NGN/USD exchange rate with 1-hour caching.
+
+    Uses the free ExchangeRate-API (open.er-api.com) which requires no API key.
+    Results are cached for 1 hour via Django's cache framework. If the live API
+    is unreachable, we fall back to the last cached value or a hardcoded default.
+    """
+    permission_classes = [AllowAny]
+
+    CACHE_KEY = 'exchange_rate_ngn_per_usd'
+    CACHE_TTL = 3600  # 1 hour
+    FALLBACK_RATE = 1600.00
+    API_URL = 'https://open.er-api.com/v6/latest/USD'
+
+    def get(self, request):
+        import requests as http_requests
+        from django.core.cache import cache
+
+        # Try cache first
+        cached = cache.get(self.CACHE_KEY)
+        if cached:
+            return Response(cached)
+
+        # Fetch live rate
+        try:
+            resp = http_requests.get(self.API_URL, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            ngn_rate = data.get('rates', {}).get('NGN', self.FALLBACK_RATE)
+
+            result = {
+                'ngn_per_usd': float(ngn_rate),
+                'source': 'live',
+                'updated_at': data.get('time_last_update_utc'),
+            }
+            cache.set(self.CACHE_KEY, result, self.CACHE_TTL)
+            return Response(result)
+        except Exception as e:
+            logger.warning(f"Failed to fetch live exchange rate: {e}")
+            return Response({
+                'ngn_per_usd': self.FALLBACK_RATE,
+                'source': 'fallback',
+                'updated_at': None,
+            })
+
+
 class InitiatePaymentView(APIView):
     """Initiate Paystack payment for courses and diplomas."""
     permission_classes = [IsAuthenticated]
@@ -769,8 +815,9 @@ class InitiatePaymentView(APIView):
                 callback_url = f"{frontend_base}/payment/verify"
 
                 # For course/diploma payments, try to use tutor's sub-account for split payment
+                # Note: Paystack only supports splitting to NGN subaccounts when transaction is NGN.
                 recipient_code = None
-                if kind in (Payment.KIND_COURSE, Payment.KIND_DIPLOMA):
+                if currency == 'NGN' and kind in (Payment.KIND_COURSE, Payment.KIND_DIPLOMA):
                     creator = item.creator if item else None
                     if creator:
                         try:
