@@ -1400,8 +1400,10 @@ class ActivationStatusView(APIView):
                             is_trial_attempt=True
                         ).count()
                         response_data['trial_attempts_used'] = trial_attempts
-                        response_data['trial_attempts_remaining'] = max(0, 5 - trial_attempts)
-                        response_data['trial_available'] = trial_attempts < 5
+                        response_data['trial_attempts_remaining'] = max(0, exam_obj.free_trial_attempts - trial_attempts)
+                        response_data['trial_available'] = trial_attempts < exam_obj.free_trial_attempts
+                        response_data['trial_attempts_limit'] = exam_obj.free_trial_attempts
+                        response_data['trial_questions_limit'] = exam_obj.free_trial_questions_per_subject
                 except Exception as e:
                     logger.warning(f"Failed to fetch trial attempts for user {user.id} exam {exam}: {str(e)}")
             
