@@ -469,13 +469,13 @@ class StartExamView(APIView):
                 is_trial_attempt=True
             ).count()
             
-            if trial_attempts_count >= 5:
+            if trial_attempts_count >= exam.free_trial_attempts:
                 return Response(
                     {
                         'detail': 'You have exhausted your free trial attempts for this exam.',
                         'trial_attempts_used': trial_attempts_count,
-                        'trial_attempts_limit': 5,
-                        'message': 'Free trial limited to 5 attempts. Unlock this exam to continue practicing.',
+                        'trial_attempts_limit': exam.free_trial_attempts,
+                        'message': f'Free trial limited to {exam.free_trial_attempts} attempts. Unlock this exam to continue practicing.',
                         'action': 'Unlock Exam'
                     },
                     status=status.HTTP_403_FORBIDDEN
@@ -535,6 +535,10 @@ class StartExamView(APIView):
             all_questions = subject_obj.questions.all()
             num_questions = min(int(num_questions), all_questions.count())
             
+            # Cap questions per subject for free trial attempts
+            if is_trial_attempt and exam.free_trial_questions_per_subject > 0:
+                num_questions = min(num_questions, exam.free_trial_questions_per_subject)
+            
             if num_questions < 1:
                 return Response(
                     {'detail': f'Not enough questions in subject {subject_obj.name}'},
@@ -591,8 +595,9 @@ class StartExamView(APIView):
                 is_trial_attempt=True
             ).count()
             response_data['trial_attempts_used'] = trial_attempts
-            response_data['trial_attempts_remaining'] = 5 - trial_attempts
-            response_data['trial_message'] = f'Free trial: {trial_attempts}/5 attempts used'
+            response_data['trial_attempts_remaining'] = exam.free_trial_attempts - trial_attempts
+            response_data['trial_attempts_limit'] = exam.free_trial_attempts
+            response_data['trial_message'] = f'Free trial: {trial_attempts}/{exam.free_trial_attempts} attempts used'
         
         return Response(response_data, status=status.HTTP_201_CREATED)
 

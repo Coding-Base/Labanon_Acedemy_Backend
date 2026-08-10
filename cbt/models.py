@@ -9,6 +9,14 @@ class Exam(models.Model):
     slug = models.SlugField(max_length=255, unique=True)
     description = models.TextField(blank=True)
     time_limit_minutes = models.PositiveIntegerField(default=120, help_text="Time limit in minutes")
+    free_trial_attempts = models.PositiveIntegerField(
+        default=5,
+        help_text="Number of free trial attempts allowed per student for this exam"
+    )
+    free_trial_questions_per_subject = models.PositiveIntegerField(
+        default=20,
+        help_text="Max questions per subject in free trial mode (0 = no limit)"
+    )
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 
