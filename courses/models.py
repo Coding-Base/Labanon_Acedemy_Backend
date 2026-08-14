@@ -804,10 +804,25 @@ class ActivationUnlock(models.Model):
             models.Index(fields=['user', 'subject_id']),
         ]
 
+    def get_exam(self):
+        from cbt.models import Exam
+        if not self.exam_identifier:
+            return None
+        try:
+            if str(self.exam_identifier).isdigit():
+                return Exam.objects.get(id=int(self.exam_identifier))
+            else:
+                return Exam.objects.get(slug=self.exam_identifier)
+        except Exam.DoesNotExist:
+            return None
+
     def clean(self):
-        """Validate max 5 subjects selected for exam unlocks."""
-        if self.exam_identifier and self.selected_exam_subjects.count() > 5:
-            raise ValueError('Maximum 5 subjects can be selected for an exam unlock')
+        """Validate max subjects selected for exam unlocks."""
+        if self.exam_identifier:
+            exam = self.get_exam()
+            limit = exam.subject_select_limit if exam else 5
+            if limit > 0 and self.selected_exam_subjects.count() > limit:
+                raise ValueError(f'Maximum {limit} subjects can be selected for this exam unlock')
 
     def __str__(self):
         if self.subject_id:

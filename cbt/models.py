@@ -17,6 +17,10 @@ class Exam(models.Model):
         default=20,
         help_text="Max questions per subject in free trial mode (0 = no limit)"
     )
+    subject_select_limit = models.PositiveIntegerField(
+        default=0,
+        help_text="Number of subjects a user can select during registration. 0 means they unlock all subjects (no selection)."
+    )
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(auto_now=True)
 

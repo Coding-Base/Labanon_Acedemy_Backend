@@ -71,7 +71,7 @@ class ExamSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Exam
-        fields = ['id', 'title', 'slug', 'description', 'time_limit_minutes', 'free_trial_attempts', 'free_trial_questions_per_subject', 'subject_count', 'subjects', 'created_at']
+        fields = ['id', 'title', 'slug', 'description', 'time_limit_minutes', 'free_trial_attempts', 'free_trial_questions_per_subject', 'subject_select_limit', 'subject_count', 'subjects', 'created_at']
         read_only_fields = ['created_at']
 
     def get_subject_count(self, obj):

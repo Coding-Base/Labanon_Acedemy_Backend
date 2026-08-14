@@ -1018,13 +1018,37 @@ class VerifyPaymentView(APIView):
                                     except Exception:
                                         logger.exception("Activation processing error")
 
+                                    selected_subject_ids = activation.get('selected_subject_ids', []) if activation else []
+
                                     if exam_identifier or subject_id:
-                                        ActivationUnlock.objects.get_or_create(
+                                        unlock, created = ActivationUnlock.objects.get_or_create(
                                             user=payment.user,
                                             exam_identifier=str(exam_identifier) if exam_identifier else None,
                                             subject_id=int(subject_id) if subject_id else None,
                                             defaults={'payment': payment}
                                         )
+                                        if exam_identifier and selected_subject_ids and created:
+                                            try:
+                                                from cbt.models import Exam, Subject
+                                                exam = None
+                                                try:
+                                                    if str(exam_identifier).isdigit():
+                                                        exam = Exam.objects.get(id=int(exam_identifier))
+                                                    else:
+                                                        exam = Exam.objects.get(slug=exam_identifier)
+                                                except Exam.DoesNotExist:
+                                                    pass
+                                                
+                                                limit = exam.subject_select_limit if exam else 5
+                                                if limit == 0:
+                                                    limit = len(selected_subject_ids)
+                                                
+                                                subject_ids = selected_subject_ids[:limit] if isinstance(selected_subject_ids, list) else []
+                                                subjects = Subject.objects.filter(id__in=subject_ids)
+                                                unlock.selected_exam_subjects.set(subjects)
+                                                logger.info(f"Added {len(subjects)} subjects to unlock {unlock.id}")
+                                            except Exception as e:
+                                                logger.warning(f"Failed to set selected subjects for unlock {unlock.id}: {str(e)}")
                                     # Mark account unlocked if activation_type == 'account'
                                     try:
                                         activation_type = activation.get('activation_type') if activation else None
@@ -1961,14 +1985,37 @@ class VerifyFlutterwavePaymentView(APIView):
 
                                     exam_identifier = activation.get('exam_id') if activation else None
                                     subject_id = activation.get('subject_id') if activation else None
+                                    selected_subject_ids = activation.get('selected_subject_ids', []) if activation else []
 
                                     if exam_identifier or subject_id:
-                                        ActivationUnlock.objects.get_or_create(
+                                        unlock, created = ActivationUnlock.objects.get_or_create(
                                             user=payment.user,
                                             exam_identifier=str(exam_identifier) if exam_identifier else None,
                                             subject_id=int(subject_id) if subject_id else None,
                                             defaults={'payment': payment}
                                         )
+                                        if exam_identifier and selected_subject_ids and created:
+                                            try:
+                                                from cbt.models import Exam, Subject
+                                                exam = None
+                                                try:
+                                                    if str(exam_identifier).isdigit():
+                                                        exam = Exam.objects.get(id=int(exam_identifier))
+                                                    else:
+                                                        exam = Exam.objects.get(slug=exam_identifier)
+                                                except Exam.DoesNotExist:
+                                                    pass
+                                                
+                                                limit = exam.subject_select_limit if exam else 5
+                                                if limit == 0:
+                                                    limit = len(selected_subject_ids)
+                                                
+                                                subject_ids = selected_subject_ids[:limit] if isinstance(selected_subject_ids, list) else []
+                                                subjects = Subject.objects.filter(id__in=subject_ids)
+                                                unlock.selected_exam_subjects.set(subjects)
+                                                logger.info(f"Added {len(subjects)} subjects to unlock {unlock.id}")
+                                            except Exception as e:
+                                                logger.warning(f"Failed to set selected subjects for unlock {unlock.id}: {str(e)}")
                                 except Exception as e:
                                     logger.error(f"Failed to create activation unlock (flutterwave verify): {str(e)}")
                                 # Mark account unlocked if activation_type == 'account'

@@ -18,7 +18,7 @@ class ExamAdmin(admin.ModelAdmin):
             'fields': ('title', 'slug', 'description')
         }),
         ('Settings', {
-            'fields': ('time_limit_minutes',)
+            'fields': ('time_limit_minutes', 'subject_select_limit', 'free_trial_attempts', 'free_trial_questions_per_subject')
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),

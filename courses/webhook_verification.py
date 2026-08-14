@@ -598,8 +598,22 @@ def _handle_unlock_payment(payment: Payment):
                 # For CBT exam unlocks: add selected subjects to M2M relationship (max 5)
                 if exam_identifier and selected_subject_ids and created:
                     try:
-                        # Validate and limit to 5 subjects
-                        subject_ids = selected_subject_ids[:5] if isinstance(selected_subject_ids, list) else []
+                        # Validate and limit to dynamic subject limit
+                        from cbt.models import Exam
+                        exam = None
+                        try:
+                            if str(exam_identifier).isdigit():
+                                exam = Exam.objects.get(id=int(exam_identifier))
+                            else:
+                                exam = Exam.objects.get(slug=exam_identifier)
+                        except Exam.DoesNotExist:
+                            pass
+                        
+                        limit = exam.subject_select_limit if exam else 5
+                        if limit == 0:
+                            limit = len(selected_subject_ids)
+                        
+                        subject_ids = selected_subject_ids[:limit] if isinstance(selected_subject_ids, list) else []
                         subjects = Subject.objects.filter(id__in=subject_ids)
                         unlock.selected_exam_subjects.set(subjects)
                         logger.info(f"Added {len(subjects)} subjects to unlock {unlock.id}")
