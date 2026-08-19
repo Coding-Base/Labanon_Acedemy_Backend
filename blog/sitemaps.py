@@ -14,8 +14,10 @@ class BlogSitemap(Sitemap):
         return obj.published_at or obj.updated_at or obj.created_at
 
     def location(self, obj):
-        """Generate relative URL path only; domain is added by get_urls()"""
-        return f"/blog/{obj.slug}/"
+        """Generate relative URL path only; domain is added by get_urls().
+        URLs must NOT have trailing slashes to match the canonical tags
+        set by the frontend SEOManager."""
+        return f"/blog/{obj.slug}"
 
     def get_urls(self, page=1, site=None, protocol=None):
         """Override to use frontend domain instead of Django Sites framework"""

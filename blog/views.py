@@ -236,6 +236,7 @@ def blog_detail_view(request, slug):
     blog = get_object_or_404(Blog, slug=slug, is_published=True)
     context = {
         'title': blog.title,
+        'slug': blog.slug,
         'content': blog.content,
         'excerpt': blog.excerpt,
         'meta_title': blog.meta_title,

@@ -52,10 +52,10 @@ urlpatterns = [
     # Sitemaps for both frontend and blog content
     path('sitemap.xml', sitemap, {'sitemaps': sitemaps}, name='django.contrib.sitemaps.views.sitemap'),
     # robots.txt - points crawlers to sitemap
-    # Serve a minimal robots.txt that points crawlers to the sitemap on the current host
+    # Always use the canonical frontend domain for the sitemap URL
     path('robots.txt', lambda request: HttpResponse(
-        "User-agent: *\nAllow: /\n" +
-        f"Sitemap: https://{request.get_host()}/sitemap.xml\n",
+        "User-agent: *\nAllow: /\n"
+        "Sitemap: https://lighthubacademy.org/sitemap.xml\n",
         content_type="text/plain"
     )),
 ]

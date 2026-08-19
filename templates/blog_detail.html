@@ -7,13 +7,13 @@
     {# Primary meta description (falls back to excerpt) #}
     <meta name="description" content="{% if meta_description %}{{ meta_description }}{% else %}{{ excerpt|default:'' }}{% endif %}">
     {% if meta_keywords %}<meta name="keywords" content="{{ meta_keywords }}">{% endif %}
-    <link rel="canonical" href="{{ request.build_absolute_uri }}" />
+    <link rel="canonical" href="https://lighthubacademy.org/blog/{{ slug }}" />
 
     {# Open Graph / Twitter cards for better social previews and SEO #}
     <meta property="og:type" content="article" />
     <meta property="og:title" content="{% if meta_title %}{{ meta_title }}{% else %}{{ title }}{% endif %}" />
     <meta property="og:description" content="{% if meta_description %}{{ meta_description }}{% else %}{{ excerpt|default:'' }}{% endif %}" />
-    <meta property="og:url" content="{{ request.build_absolute_uri }}" />
+    <meta property="og:url" content="https://lighthubacademy.org/blog/{{ slug }}" />
     {% if image %}
       <meta property="og:image" content="{{ image }}" />
     {% endif %}

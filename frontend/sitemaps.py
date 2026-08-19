@@ -16,6 +16,7 @@ class FrontendSitemap(Sitemap):
         """
         Define all frontend URLs that should be included in the sitemap.
         These correspond to routes defined in the Home.tsx navigation and other frontend pages.
+        Note: login/register are excluded — auth pages should not be indexed.
         """
         return [
             {'name': 'home', 'priority': 1.0, 'changefreq': 'daily'},
@@ -24,13 +25,13 @@ class FrontendSitemap(Sitemap):
             {'name': 'about', 'priority': 0.7, 'changefreq': 'monthly'},
             {'name': 'documentation', 'priority': 0.7, 'changefreq': 'weekly'},
             {'name': 'online-tutorial-for-student-application', 'priority': 0.8, 'changefreq': 'monthly'},
-            {'name': 'login', 'priority': 0.6, 'changefreq': 'monthly'},
-            {'name': 'register', 'priority': 0.6, 'changefreq': 'monthly'},
         ]
 
     def location(self, item):
-        """Generate relative URL path only; domain is added by get_urls()"""
-        return f"/{item['name']}/" if item['name'] != 'home' else "/"
+        """Generate relative URL path only; domain is added by get_urls().
+        URLs must NOT have trailing slashes to match the canonical tags
+        set by the frontend SEOManager."""
+        return f"/{item['name']}" if item['name'] != 'home' else "/"
 
     def lastmod(self, item):
         """Return the last modification date - not used for frontend static pages"""
