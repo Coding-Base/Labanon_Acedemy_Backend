@@ -1,9 +1,32 @@
 # backend/lessons/models.py
+# backend/lessons/models.py
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
 from django.utils.text import slugify
 import uuid
+
+
+class Category(models.Model):
+    """
+    Admin-defined category for organizing subjects (e.g., Secondary, University, Professional).
+    Replaces the hardcoded frontend keyword-matching logic.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=100, unique=True)
+    description = models.TextField(blank=True)
+    color = models.CharField(max_length=7, default='#6B7280', help_text="Hex color code for UI display")
+    order = models.PositiveIntegerField(default=0, help_text="Display order in filter tabs")
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['order', 'name']
+        verbose_name_plural = 'categories'
+
+    def __str__(self):
+        return self.name
 
 
 class Subject(models.Model):
@@ -13,6 +36,10 @@ class Subject(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255, unique=True)
     description = models.TextField(blank=True)
+    category = models.ForeignKey(
+        Category, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='subjects', help_text="Admin-assigned category for this subject"
+    )
     is_custom = models.BooleanField(default=False, help_text="Whether this was created by admin via custom input")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

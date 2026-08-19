@@ -1,15 +1,30 @@
 # backend/lessons/serializers.py
 from rest_framework import serializers
-from .models import Subject, LessonSubfolder, Topic, LessonContent, StudentLessonProgress, LessonSearch
+from .models import Category, Subject, LessonSubfolder, Topic, LessonContent, StudentLessonProgress, LessonSearch
+
+
+class CategorySerializer(serializers.ModelSerializer):
+    subjects_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Category
+        fields = ['id', 'name', 'description', 'color', 'order', 'is_active', 'created_at', 'subjects_count']
+        read_only_fields = ['id', 'created_at']
+
+    def get_subjects_count(self, obj):
+        return obj.subjects.count()
 
 
 class SubjectSerializer(serializers.ModelSerializer):
     topics_count = serializers.SerializerMethodField()
     subfolders_count = serializers.SerializerMethodField()
+    category = serializers.PrimaryKeyRelatedField(queryset=Category.objects.all(), required=False, allow_null=True)
+    category_name = serializers.SerializerMethodField()
+    category_color = serializers.SerializerMethodField()
     
     class Meta:
         model = Subject
-        fields = ['id', 'name', 'description', 'is_custom', 'created_at', 'topics_count', 'subfolders_count']
+        fields = ['id', 'name', 'description', 'category', 'category_name', 'category_color', 'is_custom', 'created_at', 'topics_count', 'subfolders_count']
         read_only_fields = ['id', 'created_at']
     
     def get_topics_count(self, obj):
@@ -17,6 +32,13 @@ class SubjectSerializer(serializers.ModelSerializer):
 
     def get_subfolders_count(self, obj):
         return obj.subfolders.count()
+
+    def get_category_name(self, obj):
+        return obj.category.name if obj.category else None
+
+    def get_category_color(self, obj):
+        return obj.category.color if obj.category else None
+
 
 
 class LessonSubfolderSerializer(serializers.ModelSerializer):
@@ -68,12 +90,16 @@ class LessonContentSerializer(serializers.ModelSerializer):
     subfolder_name = serializers.CharField(source='topic.subfolder.name', read_only=True)
     subfolder = serializers.UUIDField(source='topic.subfolder_id', read_only=True)
     subject = serializers.UUIDField(source='topic.subject_id', read_only=True)
+    category_name = serializers.SerializerMethodField()
+    category_color = serializers.SerializerMethodField()
     linked_topics_data = serializers.SerializerMethodField()
     
     class Meta:
         model = LessonContent
         fields = [
-            'id', 'topic', 'topic_name', 'subject', 'subject_name', 'subfolder', 'subfolder_name', 'title', 'content',
+            'id', 'topic', 'topic_name', 'subject', 'subject_name', 'subfolder', 'subfolder_name',
+            'category_name', 'category_color',
+            'title', 'content',
             'publisher_name', 'publisher_title', 'published_date',
             'linked_topics', 'linked_topics_data', 'embedded_images',
             'slug', 'meta_description', 'meta_keywords', 'og_image', 'tags',
@@ -81,6 +107,14 @@ class LessonContentSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id', 'slug', 'published_date', 'created_at', 'updated_at']
     
+    def get_category_name(self, obj):
+        cat = getattr(obj.topic.subject, 'category', None)
+        return cat.name if cat else None
+
+    def get_category_color(self, obj):
+        cat = getattr(obj.topic.subject, 'category', None)
+        return cat.color if cat else None
+
     def get_linked_topics_data(self, obj):
         """Return full topic data for linked topics"""
         return [
@@ -112,15 +146,24 @@ class LessonSearchSerializer(serializers.ModelSerializer):
 
 class SubjectFolderSerializer(serializers.ModelSerializer):
     """
-    Serializer for displaying a subject with all its topics (folder view)
+    Serializer for displaying a subject with all its topics and subfolders (folder view)
     """
     topics = TopicSerializer(many=True, read_only=True)
     subfolders = LessonSubfolderSerializer(many=True, read_only=True)
+    category_name = serializers.SerializerMethodField()
+    category_color = serializers.SerializerMethodField()
     
     class Meta:
         model = Subject
-        fields = ['id', 'name', 'description', 'is_custom', 'created_at', 'topics', 'subfolders']
+        fields = ['id', 'name', 'description', 'category', 'category_name', 'category_color', 'is_custom', 'created_at', 'topics', 'subfolders']
         read_only_fields = ['id', 'created_at']
+
+    def get_category_name(self, obj):
+        return obj.category.name if obj.category else None
+
+    def get_category_color(self, obj):
+        return obj.category.color if obj.category else None
+
 
 
 class TopicDetailSerializer(serializers.ModelSerializer):

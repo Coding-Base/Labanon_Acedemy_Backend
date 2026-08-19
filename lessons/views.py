@@ -10,9 +10,9 @@ from django.utils import timezone
 import json
 
 from users.permissions import IsMasterAdmin
-from .models import Subject, LessonSubfolder, Topic, LessonContent, StudentLessonProgress, LessonSearch
+from .models import Category, Subject, LessonSubfolder, Topic, LessonContent, StudentLessonProgress, LessonSearch
 from .serializers import (
-    SubjectSerializer, LessonSubfolderSerializer, TopicSerializer, LessonContentSerializer,
+    CategorySerializer, SubjectSerializer, LessonSubfolderSerializer, TopicSerializer, LessonContentSerializer,
     StudentLessonProgressSerializer, LessonSearchSerializer,
     SubjectFolderSerializer, TopicDetailSerializer
 )
@@ -22,6 +22,37 @@ class StandardResultsSetPagination(PageNumberPagination):
     page_size = 20
     page_size_query_param = 'page_size'
     max_page_size = 100
+
+
+class CategoryViewSet(viewsets.ModelViewSet):
+    """
+    CRUD operations for lesson categories.
+    - Master admin can create/update/delete categories
+    - Everyone can list active categories
+    """
+    queryset = Category.objects.filter(is_active=True)
+    serializer_class = CategorySerializer
+    pagination_class = None  # Categories are few, no pagination needed
+    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
+    search_fields = ['name', 'description']
+    ordering_fields = ['order', 'name', 'created_at']
+    ordering = ['order', 'name']
+
+    def get_permissions(self):
+        if self.action in ['create', 'update', 'partial_update', 'destroy']:
+            permission_classes = [permissions.IsAuthenticated]
+        else:
+            permission_classes = [permissions.AllowAny]
+        return [permission() for permission in permission_classes]
+
+    def get_queryset(self):
+        # Admin sees all categories including inactive; public only active
+        if self.request.user.is_authenticated and (
+            self.request.user.is_staff or
+            (hasattr(self.request.user, 'is_master_admin') and self.request.user.is_master_admin)
+        ):
+            return Category.objects.all().order_by('order', 'name')
+        return Category.objects.filter(is_active=True).order_by('order', 'name')
 
 
 class SubjectViewSet(viewsets.ModelViewSet):
@@ -43,6 +74,7 @@ class SubjectViewSet(viewsets.ModelViewSet):
             permission_classes = [permissions.IsAuthenticated]  # Allow authenticated users
         else:
             permission_classes = [permissions.AllowAny]
+
         return [permission() for permission in permission_classes]
 
     def perform_create(self, serializer):
