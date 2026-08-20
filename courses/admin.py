@@ -1,8 +1,30 @@
 from django.contrib import admin
 from .models import (
     ActivationFee, ActivationUnlock, ReferralEvent, ReferralProfile,
-    ReferralRelationship, ReferralSettings
+    ReferralRelationship, ReferralSettings, ProPlan, UserSubscription, SubscriptionResetLog
 )
+
+
+@admin.register(ProPlan)
+class ProPlanAdmin(admin.ModelAdmin):
+    list_display = ('name', 'price_ngn', 'price_usd', 'billing_interval_days', 'all_exams_unlocked', 'is_active', 'order')
+    list_filter = ('is_active', 'all_exams_unlocked')
+    search_fields = ('name', 'slug')
+    prepopulated_fields = {'slug': ('name',)}
+
+
+@admin.register(UserSubscription)
+class UserSubscriptionAdmin(admin.ModelAdmin):
+    list_display = ('user', 'plan', 'status', 'start_date', 'end_date', 'auto_renew', 'created_at')
+    list_filter = ('status', 'auto_renew', 'plan')
+    search_fields = ('user__username', 'user__email')
+    readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(SubscriptionResetLog)
+class SubscriptionResetLogAdmin(admin.ModelAdmin):
+    list_display = ('admin_user', 'exam_title', 'months_threshold', 'cutoff_date', 'affected_users_count', 'created_at')
+    readonly_fields = ('created_at',)
 
 
 @admin.register(ActivationFee)
@@ -14,7 +36,8 @@ class ActivationFeeAdmin(admin.ModelAdmin):
 
 @admin.register(ActivationUnlock)
 class ActivationUnlockAdmin(admin.ModelAdmin):
-    list_display = ('user', 'exam_identifier', 'subject_id', 'payment', 'activated_at')
+    list_display = ('user', 'exam_identifier', 'subject_id', 'is_active', 'payment', 'activated_at', 'revoked_at')
+    list_filter = ('is_active',)
     search_fields = ('user__username', 'exam_identifier')
     readonly_fields = ('activated_at',)
 

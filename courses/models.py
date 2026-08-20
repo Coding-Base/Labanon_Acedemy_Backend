@@ -230,12 +230,14 @@ class Payment(models.Model):
     KIND_DIPLOMA = 'diploma'
     KIND_UNLOCK = 'unlock'
     KIND_MATERIAL = 'material'
+    KIND_SUBSCRIPTION = 'subscription'
 
     KIND_CHOICES = [
         (KIND_COURSE, 'Course Purchase'),
         (KIND_DIPLOMA, 'Diploma Enrollment'),
         (KIND_UNLOCK, 'Account Unlock'),
         (KIND_MATERIAL, 'Material Purchase'),
+        (KIND_SUBSCRIPTION, 'Pro Subscription'),
     ]
 
     # Payment provider choices
@@ -793,6 +795,10 @@ class ActivationUnlock(models.Model):
     subject_id = models.IntegerField(blank=True, null=True, help_text='Legacy field for interview subject unlocks')
     payment = models.ForeignKey(Payment, on_delete=models.SET_NULL, null=True, blank=True, related_name='activations')
     activated_at = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=True, help_text="Whether this unlock is currently active")
+    expires_at = models.DateTimeField(null=True, blank=True, help_text="Optional expiration date for time-limited unlock")
+    revoked_at = models.DateTimeField(null=True, blank=True, help_text="When this unlock was revoked/reset by admin")
+    revocation_reason = models.CharField(max_length=255, blank=True, null=True, help_text="Reason for revocation (e.g. bulk reset older than 9 months)")
     
     # For CBT exam unlocks: store selected subjects (max 5)
     selected_exam_subjects = models.ManyToManyField('cbt.Subject', blank=True, related_name='student_unlocks', help_text='Selected subjects for CBT exam (max 5)')
@@ -1155,3 +1161,8 @@ class LegalDocument(models.Model):
     
     def __str__(self):
         return f"{self.title} (v{self.version})"
+
+
+# Import and expose subscription models
+from .subscription_models import ProPlan, UserSubscription, SubscriptionResetLog
+

@@ -1264,6 +1264,58 @@ class ActivationStatusView(APIView):
             user = request.user
             unlocked = False
             allowed_subjects = []
+
+            # 1. PRO SUBSCRIPTION & ACCESS CHECK
+            if exam:
+                try:
+                    from courses.subscription_views import user_has_exam_access
+                    from cbt.models import Exam as CBTExam
+                    exam_obj = None
+                    try:
+                        exam_obj = CBTExam.objects.get(id=int(exam))
+                    except (ValueError, CBTExam.DoesNotExist):
+                        try:
+                            exam_obj = CBTExam.objects.get(slug=str(exam))
+                        except CBTExam.DoesNotExist:
+                            exam_obj = None
+
+                    exam_id_check = exam_obj.id if exam_obj else exam
+                    if user_has_exam_access(user, exam_id_check):
+                        unlocked = True
+                        # Check if specific subjects are bound to an ActivationUnlock
+                        unlock_qs = ActivationUnlock.objects.filter(user=user, is_active=True)
+                        if exam_obj:
+                            unlock = unlock_qs.filter(Q(exam_identifier=str(exam_obj.id)) | Q(exam_identifier=exam_obj.slug)).first()
+                        else:
+                            unlock = unlock_qs.filter(exam_identifier=str(exam)).first()
+
+                        if unlock and unlock.selected_exam_subjects.exists():
+                            allowed_subjects = list(unlock.selected_exam_subjects.values('id', 'name', 'exam_id'))
+                        elif exam_obj:
+                            allowed_subjects = list(exam_obj.subjects.values('id', 'name', 'exam_id'))
+
+                        return Response({
+                            'unlocked': True,
+                            'is_pro': True,
+                            'allowed_subjects': allowed_subjects,
+                            'trial_available': False
+                        }, status=status.HTTP_200_OK)
+                except Exception as e:
+                    logger.exception(f"Error checking Pro/exam access in ActivationStatusView: {str(e)}")
+
+            if subject:
+                try:
+                    from courses.subscription_views import user_has_exam_access
+                    from cbt.models import Subject as CBTSubject
+                    subj_obj = CBTSubject.objects.filter(id=subject).first()
+                    if subj_obj and user_has_exam_access(user, subj_obj.exam_id):
+                        return Response({
+                            'unlocked': True,
+                            'is_pro': True,
+                            'trial_available': False
+                        }, status=status.HTTP_200_OK)
+                except Exception as e:
+                    logger.exception(f"Error checking subject access in ActivationStatusView: {str(e)}")
             
             # LEGACY SUPPORT: Check if user has global account-level unlock.
             # This preserves access for users who unlocked before per-exam subject selection was introduced.
@@ -1287,7 +1339,7 @@ class ActivationStatusView(APIView):
                     except Exception as e:
                         logger.exception(f"Failed to fetch exam subjects for legacy unlocked user: {str(e)}")
                 
-                response_data = {'unlocked': True}
+                response_data = {'unlocked': True, 'trial_available': False}
                 if allowed_subjects:
                     response_data['allowed_subjects'] = allowed_subjects
                 return Response(response_data, status=status.HTTP_200_OK)

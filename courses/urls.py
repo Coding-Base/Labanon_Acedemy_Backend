@@ -30,15 +30,39 @@ from .verification_views import (
 from .batch_compliance_views import (
     ComplianceBatchSubmissionView, ComplianceFolderDashboardView,
     VerificationFolderAdminDashboardView, ApproveComplianceFolderView,
+    ComplianceBatchSubmissionView, ComplianceFolderDashboardView,
+    VerificationFolderAdminDashboardView, ApproveComplianceFolderView,
     RejectComplianceFolderView
 )
 from .referral_views import (
     AdminReferralEventsView, AdminReferralSettingsView, ApplyReferralCodeView,
     MyReferralView, RedeemReferralPointsView
 )
+from .subscription_views import (
+    AdminActivationsListView, AdminResetActivationsView, AdminResetLogsView,
+    AdminProPlanView, AdminProPlanDetailView, AdminSubscribersView, AdminGrantProView,
+    StudentProPlansView, StudentSubscriptionStatusView, InitiateSubscriptionPaymentView,
+    VerifySubscriptionPaymentView, ToggleAutoRenewView, CancelSubscriptionView
+)
 
 # Custom payment endpoints MUST be defined before router to take precedence
 urlpatterns = [
+    # Subscription Manager Endpoints (Admin & Student)
+    path('subscriptions/admin/activations/', AdminActivationsListView.as_view(), name='admin-subscriptions-activations'),
+    path('subscriptions/admin/reset-activations/', AdminResetActivationsView.as_view(), name='admin-subscriptions-reset'),
+    path('subscriptions/admin/reset-logs/', AdminResetLogsView.as_view(), name='admin-subscriptions-reset-logs'),
+    path('subscriptions/admin/plans/', AdminProPlanView.as_view(), name='admin-subscriptions-plans'),
+    path('subscriptions/admin/plans/<int:plan_id>/', AdminProPlanDetailView.as_view(), name='admin-subscriptions-plan-detail'),
+    path('subscriptions/admin/subscribers/', AdminSubscribersView.as_view(), name='admin-subscriptions-subscribers'),
+    path('subscriptions/admin/grant-pro/', AdminGrantProView.as_view(), name='admin-subscriptions-grant-pro'),
+    path('subscriptions/plans/', StudentProPlansView.as_view(), name='student-subscriptions-plans'),
+    path('subscriptions/my-status/', StudentSubscriptionStatusView.as_view(), name='student-subscriptions-status'),
+    path('subscriptions/initiate/', InitiateSubscriptionPaymentView.as_view(), name='student-subscriptions-initiate'),
+    path('subscriptions/verify/<str:reference>/', VerifySubscriptionPaymentView.as_view(), name='student-subscriptions-verify'),
+    path('subscriptions/verify/', VerifySubscriptionPaymentView.as_view(), name='student-subscriptions-verify-post'),
+    path('subscriptions/toggle-auto-renew/', ToggleAutoRenewView.as_view(), name='student-subscriptions-toggle-renew'),
+    path('subscriptions/cancel/', CancelSubscriptionView.as_view(), name='student-subscriptions-cancel'),
+
     # Signature and logo endpoints for certificates
     path('signature/', SignatureView.as_view(), name='signature'),
     path('admin/signature/', AdminSignatureView.as_view(), name='admin-signature'),

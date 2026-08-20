@@ -453,13 +453,18 @@ class StartExamView(APIView):
         subjects_info = []
         is_trial_attempt = False
         
-        # Check if user has an unlock for this exam
+        # Check if user has an unlock for this exam or active Pro plan
         has_unlock = False
         if request.user.is_authenticated:
-            has_unlock = ActivationUnlock.objects.filter(
-                user=request.user, 
-                exam_identifier=str(exam_id)
-            ).exists() or getattr(request.user, 'is_unlocked', False)
+            try:
+                from courses.subscription_views import user_has_exam_access
+                has_unlock = user_has_exam_access(request.user, exam_id)
+            except Exception:
+                has_unlock = ActivationUnlock.objects.filter(
+                    user=request.user, 
+                    exam_identifier=str(exam_id),
+                    is_active=True
+                ).exists() or getattr(request.user, 'is_unlocked', False)
         
         # If no unlock, check if they can use free trial (max 5 attempts per exam)
         if not has_unlock:
@@ -486,21 +491,17 @@ class StartExamView(APIView):
         
         # For multi-subject exams: verify student has selected these subjects in their unlock (if they have one)
         if subjects_config and exam_id and has_unlock:
-            try:
-                unlock = ActivationUnlock.objects.get(user=request.user, exam_identifier=str(exam_id))
+            unlock = ActivationUnlock.objects.filter(user=request.user, exam_identifier=str(exam_id), is_active=True).first()
+            if unlock:
                 allowed_subject_ids = set(unlock.selected_exam_subjects.values_list('id', flat=True))
                 requested_subject_ids = set(cfg.get('subject_id') for cfg in subjects_config)
                 
-                # PHASE 1: Backward Compatibility for Legacy Unlocks
-                # If unlock has no selected subjects (legacy/old unlock), allow access to ALL exam subjects
-                # This maintains compatibility with exams unlocked before the course selection feature
+                # If unlock has no selected subjects (legacy or full unlock), allow access to ALL exam subjects
                 if not allowed_subject_ids:
                     allowed_subject_ids = set(exam.subjects.values_list('id', flat=True))
                 
                 # Check if all requested subjects are in allowed subjects
                 if not requested_subject_ids.issubset(allowed_subject_ids):
-                    unauthorized_subjects = requested_subject_ids - allowed_subject_ids
-                    # PHASE 3: Better error messages with available subjects
                     allowed_subject_names = list(exam.subjects.filter(id__in=allowed_subject_ids).values_list('name', flat=True))
                     return Response(
                         {
@@ -511,15 +512,7 @@ class StartExamView(APIView):
                         },
                         status=status.HTTP_403_FORBIDDEN
                     )
-            except ActivationUnlock.DoesNotExist:
-                return Response(
-                    {
-                        'detail': 'You have not unlocked this exam yet.',
-                        'action': 'Complete the activation payment to unlock this exam and select your subjects.',
-                        'next_step': 'Unlock Exam'
-                    },
-                    status=status.HTTP_403_FORBIDDEN
-                )
+            # If no specific unlock record exists but has_unlock is True (e.g. Pro subscriber), they have access to all subjects!
         
         for subject_config in subjects_data:
             subject_id = subject_config.get('subject_id')
