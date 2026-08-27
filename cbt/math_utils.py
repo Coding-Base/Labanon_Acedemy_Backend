@@ -38,17 +38,33 @@ CHEMICAL_FORMULAS = [
     'O2', 'N2', 'H2', 'F2', 'Cl2', 'Br2', 'I2',
 ]
 
-# Pattern to detect chemical formula-like strings: at least one uppercase letter
-# followed by lowercase and/or digits, with subscripts
-CHEMICAL_FORMULA_PATTERN = re.compile(
-    r'\b([A-Z][a-z]?(?:\d+)?(?:[A-Z][a-z]?(?:\d+)?)*(?:\([A-Z][a-z]?(?:\d+)?\)\d*)*)\b'
-)
-
-# Pattern to detect if a string looks like a chemical formula
-# Must have: uppercase letter + (lowercase letter or digit) and contain at least one digit
 CHEMICAL_LIKE_PATTERN = re.compile(
     r'^[A-Z][a-z]?\d*(?:[A-Z][a-z]?\d*)*(?:\([A-Z][a-z]?\d*\)\d*)*$'
 )
+
+
+def sanitize_escaped_latex(text: str) -> str:
+    """
+    Repair string escaping errors where backslashes were converted to control characters.
+    e.g. \\f (form feed \\x0c), \\b (backspace \\x08), \\v (vertical tab \\x0b).
+    """
+    if not text:
+        return text
+    
+    # Repair form feed (\x0c) -> \f
+    text = text.replace('\x0crac', r'\frac')
+    text = text.replace('\x0car', r'\bar')
+    text = text.replace('\x0c', r'\f')
+    
+    # Repair backspace (\x08) -> \b
+    text = text.replace('\x08ar', r'\bar')
+    text = text.replace('\x08eta', r'\beta')
+    text = text.replace('\x08', r'\b')
+    
+    # Repair vertical tab (\x0b) -> \v
+    text = text.replace('\x0b', r'\v')
+    
+    return text
 
 
 def is_chemical_formula(text: str) -> bool:
@@ -62,12 +78,9 @@ def is_chemical_formula(text: str) -> bool:
     if not text or len(text) < 2:
         return False
     
-    # Check against known formulas first
     if text in CHEMICAL_FORMULAS:
         return True
     
-    # Heuristic: must match chemical pattern AND contain at least one digit
-    # (to distinguish from regular words/abbreviations like "DNA", "RNA", "ATP")
     if CHEMICAL_LIKE_PATTERN.match(text) and re.search(r'\d', text):
         return True
     
@@ -75,104 +88,59 @@ def is_chemical_formula(text: str) -> bool:
 
 
 def format_chemical_formula(formula: str) -> str:
-    """
-    Convert a chemical formula to LaTeX using \\ce{} (mhchem) notation.
-    
-    Examples:
-        H2O -> \\ce{H2O}
-        H2SO4 -> \\ce{H2SO4}
-        Ca(OH)2 -> \\ce{Ca(OH)2}
-    """
+    """Convert a chemical formula to LaTeX using \\ce{} notation."""
     return '$\\ce{' + str(formula) + '}$'
 
 
 def convert_reaction_arrows(text: str) -> str:
-    """
-    Convert common reaction arrow notations to LaTeX.
-    
-    Examples:
-        -> or --> or → -> \\rightarrow
-        <-> or <=> or ⇌ -> \\rightleftharpoons
-    """
-    # Reversible reaction arrows (must check before single arrows)
+    """Convert common reaction arrow notations to LaTeX."""
     text = re.sub(r'\s*<\s*=\s*>\s*', r' $\\rightleftharpoons$ ', text)
     text = re.sub(r'\s*<\s*-\s*>\s*', r' $\\rightleftharpoons$ ', text)
     text = re.sub(r'\s*⇌\s*', r' $\\rightleftharpoons$ ', text)
-    
-    # Forward reaction arrows
     text = re.sub(r'\s*-\s*-\s*>\s*', r' $\\rightarrow$ ', text)
     text = re.sub(r'\s*-\s*>\s*', r' $\\rightarrow$ ', text)
     text = re.sub(r'\s*→\s*', r' $\\rightarrow$ ', text)
-    
     return text
 
 
 def convert_scientific_notation(text: str) -> str:
-    """
-    Convert scientific notation patterns to LaTeX.
-    
-    Examples:
-        6.02 x 10^23 -> $6.02 \\times 10^{23}$
-        3.0 × 10^8 -> $3.0 \\times 10^{8}$
-        1.6e-19 -> $1.6 \\times 10^{-19}$
-    """
-    # Pattern: number x 10^number or number × 10^number
+    """Convert scientific notation patterns to LaTeX."""
     text = re.sub(
         r'(\d+\.?\d*)\s*[x×\*]\s*10\s*\^\s*\{?\s*(-?\d+)\s*\}?',
         r'$\1 \\times 10^{\2}$',
         text
     )
-    
-    # Pattern: number e/E ±number (e.g., 1.6e-19)
     text = re.sub(
         r'(\d+\.?\d*)\s*[eE]\s*(-?\d+)',
         r'$\1 \\times 10^{\2}$',
         text
     )
-    
     return text
 
 
 def convert_ionic_charges(text: str) -> str:
-    """
-    Convert ionic charge notation to LaTeX.
-    
-    Examples:
-        Ca^2+ -> $\\text{Ca}^{2+}$
-        SO4^2- -> $\\text{SO}_4^{2-}$
-        Fe^3+ -> $\\text{Fe}^{3+}$
-    """
-    # Pattern: Element^charge (e.g., Ca^2+, Fe^3+, Cl^-)
+    """Convert ionic charge notation to LaTeX."""
     text = re.sub(
         r'\b([A-Z][a-z]?(?:\d*))\s*\^\s*(\d*[+-])',
         lambda m: '$\\text{' + m.group(1) + '}^{' + m.group(2) + '}$',
         text
     )
-    
     return text
 
 
 def convert_to_latex(text: str) -> str:
     """
     Convert simple math notation to LaTeX format.
-    Only converts the math syntax markers, does NOT wrap in delimiters.
-    
-    Examples:
-        3x^2 -> 3x^{2}
-        sqrt(x) -> \\sqrt{x}
-        1/2 -> \\frac{1}{2}
-        x_1 -> x_{1}
-    
-    Args:
-        text: The text to convert
-        
-    Returns:
-        Text with LaTeX formatting applied
+    Only converts math syntax markers, does not wrap in delimiters.
     """
     if not text:
         return text
     
     result = text
+    
+    # If it's already a full LaTeX command like \frac{a}{b} or \bar{x}, keep intact
+    if result.startswith('\\'):
+        return result
     
     # Convert powers: x^2 -> x^{2}, x^n -> x^{n}
     result = re.sub(r'\^(\d+)', r'^{\1}', result)
@@ -193,15 +161,7 @@ def convert_to_latex(text: str) -> str:
 
 def has_math_notation(text: str) -> bool:
     """
-    Check if a SEGMENT of text contains mathematical notation.
-    More conservative than before — checks for actual math constructs,
-    not just any occurrence of ^ or _.
-    
-    Args:
-        text: The text segment to check
-        
-    Returns:
-        True if text contains clear math patterns
+    Check if a segment contains mathematical notation or LaTeX commands.
     """
     if not text:
         return False
@@ -211,12 +171,19 @@ def has_math_notation(text: str) -> bool:
         r'_{',              # Already-converted LaTeX subscript
         r'\\sqrt',          # LaTeX sqrt
         r'\\frac',          # LaTeX fraction
+        r'\\bar',           # LaTeX overline/bar
+        r'\\ce',            # mhchem chemistry command
+        r'\\text',          # LaTeX text
+        r'\\times',         # LaTeX multiplication
+        r'\\div',           # LaTeX division
+        r'\\pm',            # LaTeX plus-minus
+        r'\\alpha|\\beta|\\gamma|\\delta|\\theta|\\pi|\\sigma|\\lambda|\\mu|\\Delta', # Greek
         r'\w\^\d',          # Power notation: x^2
         r'\w\^[a-zA-Z]',   # Power notation: x^n
         r'\w_\d',           # Subscript: x_1
         r'sqrt\(',          # sqrt function
         r'\d+/\d+',         # Numeric fraction
-        r'\\[a-z]+{',       # LaTeX command with argument
+        r'\\[a-z]+{',       # Generic LaTeX command with argument
     ]
     
     return any(re.search(pattern, text) for pattern in math_patterns)
@@ -225,67 +192,42 @@ def has_math_notation(text: str) -> bool:
 def smart_wrap_math_segments(text: str) -> str:
     """
     Intelligently wrap only math segments in LaTeX delimiters.
-    
-    Instead of wrapping the entire string (which destroys readability of
-    English text in math mode), this function:
-    1. Tokenizes the text into words/segments
-    2. Identifies which segments contain math notation
-    3. Wraps only those segments in $...$
-    4. Auto-detects and converts chemical formulas using \\ce{}
-    5. Leaves plain English text untouched
-    
-    This is backward-compatible with existing questions that already have
-    $ delimiters — those pass through unchanged.
+    Leaves English sentences untouched.
     """
     if not text:
         return ''
+    
+    # Sanitize control character escapes
+    text = sanitize_escaped_latex(text)
     
     # If text already has $ delimiters, it's already formatted — pass through
     if '$' in text:
         return text
     
-    # Step 1: Handle reaction arrows (before tokenizing)
+    # Handle reaction arrows
     text = convert_reaction_arrows(text)
     
-    # If reaction arrow conversion already added $ delimiters, return
-    if '$' in text:
-        # Also handle scientific notation and ionic charges in remaining text
-        text = convert_scientific_notation(text)
-        text = convert_ionic_charges(text)
-        return text
-    
-    # Step 2: Handle scientific notation (e.g., 6.02 x 10^23)
+    # Handle scientific notation
     text = convert_scientific_notation(text)
-    if '$' in text:
-        text = convert_ionic_charges(text)
-        return _process_remaining_math(text)
     
-    # Step 3: Handle ionic charges (e.g., Ca^2+)
+    # Handle ionic charges
     text = convert_ionic_charges(text)
-    if '$' in text:
-        return _process_remaining_math(text)
     
-    # Step 4: Tokenize and process word by word
+    # Tokenize and process word by word
     return _process_remaining_math(text)
 
 
 def _process_remaining_math(text: str) -> str:
-    """
-    Process text that may have some $ delimiters already added
-    and some plain math segments remaining.
-    """
-    # Split on existing $ delimiters to avoid re-processing them
+    """Process text that may have some $ delimiters already added."""
     parts = re.split(r'(\$[^$]+\$|\$\$[^$]+\$\$)', text)
     result_parts = []
     
     for part in parts:
         if not part:
             continue
-        # If this part is already wrapped in $, pass through
         if part.startswith('$'):
             result_parts.append(part)
             continue
-        # Process this segment for math and chemistry
         result_parts.append(_wrap_segment_math(part))
     
     return ''.join(result_parts)
@@ -293,10 +235,9 @@ def _process_remaining_math(text: str) -> str:
 
 def _wrap_segment_math(text: str) -> str:
     """
-    Process a text segment (without existing $ delimiters) to wrap
-    math expressions and chemical formulas.
+    Process a text segment to wrap math expressions and chemical formulas in $...$.
+    CRITICAL: Never strip braces '{' or '}' as they belong to LaTeX commands like \\frac{27}{100}.
     """
-    # Split into tokens (words and whitespace)
     tokens = re.split(r'(\s+)', text)
     result_tokens = []
     
@@ -305,15 +246,22 @@ def _wrap_segment_math(text: str) -> str:
             result_tokens.append(token)
             continue
         
-        # Strip punctuation for checking, but preserve it in output
-        stripped = token.strip('.,;:!?()[]{}')
-        leading = token[:len(token) - len(token.lstrip('.,;:!?()[]{}'))]
-        trailing = token[len(stripped) + len(leading):]
+        # Strip sentence punctuation only (commas, periods, semicolons, quotes, question marks)
+        # Preserve curly braces {}, brackets [], and parentheses if inside LaTeX!
+        if '\\' in token:
+            # Token contains LaTeX command: strip only leading/trailing sentence punctuation
+            stripped = token.strip('.,;:!?"\'')
+            leading = token[:len(token) - len(token.lstrip('.,;:!?"\''))]
+            trailing = token[len(stripped) + len(leading):]
+        else:
+            stripped = token.strip('.,;:!?"\'()')
+            leading = token[:len(token) - len(token.lstrip('.,;:!?"\'()'))]
+            trailing = token[len(stripped) + len(leading):]
         
         # Check if it's a known chemical formula
         if is_chemical_formula(stripped):
             result_tokens.append(leading + '$\\ce{' + stripped + '}$' + trailing)
-        # Check if it contains math notation
+        # Check if it contains math notation or LaTeX command
         elif has_math_notation(stripped):
             converted = convert_to_latex(stripped)
             result_tokens.append(leading + '$' + converted + '$' + trailing)
@@ -324,21 +272,7 @@ def _wrap_segment_math(text: str) -> str:
 
 
 def format_math_question(question_text: str) -> str:
-    """
-    Format a mathematical/chemistry question for display.
-    
-    FIXED: No longer wraps the entire sentence in $ delimiters.
-    Instead, only wraps individual math/chemistry segments.
-    
-    Backward-compatible: questions that already have $ delimiters
-    pass through unchanged.
-    
-    Args:
-        question_text: The question text
-        
-    Returns:
-        Formatted question text ready for KaTeX rendering
-    """
+    """Format a mathematical/chemistry question for display."""
     if not question_text:
         return ''
     
@@ -346,16 +280,7 @@ def format_math_question(question_text: str) -> str:
 
 
 def format_math_text(text: str) -> str:
-    """
-    Alias for format_math_question for use in serializers.
-    Formats text that may contain math or chemistry notation.
-    
-    Args:
-        text: The text to format
-        
-    Returns:
-        Formatted text ready for KaTeX rendering
-    """
+    """Alias for format_math_question for use in serializers."""
     if not text:
         return ''
     
@@ -363,64 +288,25 @@ def format_math_text(text: str) -> str:
 
 
 def format_math_choices(choices: List[str]) -> List[str]:
-    """
-    Format an array of answer choices.
-    
-    Args:
-        choices: List of choice texts
-        
-    Returns:
-        List of formatted choice texts
-    """
+    """Format an array of answer choices."""
     return [format_math_question(choice) for choice in choices]
 
 
 def extract_math_expressions(text: str) -> List[str]:
-    """
-    Extract all mathematical expressions from text.
-    
-    Args:
-        text: The text to search
-        
-    Returns:
-        List of math expressions found
-    """
+    """Extract all mathematical expressions from text."""
     if not text:
         return []
     
     expressions = []
-    
-    # Extract inline math: $...$
     inline_math = re.findall(r'\$([^$]+)\$', text)
     expressions.extend(inline_math)
-    
-    # Extract block math: $$...$$
     block_math = re.findall(r'\$\$([^$]+)\$\$', text)
     expressions.extend(block_math)
-    
-    # Extract LaTeX inline: \(...\)
-    latex_inline = re.findall(r'\\\(([^\)]+)\\\)', text)
-    expressions.extend(latex_inline)
-    
-    # Extract LaTeX block: \[...\]
-    latex_block = re.findall(r'\\\[([^\]]+)\\\]', text)
-    expressions.extend(latex_block)
-    
     return expressions
 
 
 def is_valid_latex(latex: str) -> bool:
-    """
-    Validate LaTeX syntax (basic check).
-    
-    Checks for balanced braces.
-    
-    Args:
-        latex: LaTeX string to validate
-        
-    Returns:
-        True if LaTeX appears to be valid
-    """
+    """Validate LaTeX syntax (basic check for balanced braces)."""
     if not latex:
         return False
     
@@ -430,7 +316,6 @@ def is_valid_latex(latex: str) -> bool:
             brace_count += 1
         elif char == '}':
             brace_count -= 1
-        
         if brace_count < 0:
             return False
     
@@ -438,20 +323,7 @@ def is_valid_latex(latex: str) -> bool:
 
 
 def replace_symbols(text: str) -> str:
-    """
-    Replace common symbol names with LaTeX equivalents.
-    
-    Examples:
-        "pi" -> "\\pi"
-        "sqrt2" -> "\\sqrt{2}"
-        "infinity" -> "\\infty"
-    
-    Args:
-        text: Text containing symbol names
-        
-    Returns:
-        Text with symbols replaced by LaTeX
-    """
+    """Replace common symbol names with LaTeX equivalents."""
     if not text:
         return text
     
@@ -479,7 +351,6 @@ def replace_symbols(text: str) -> str:
     }
     
     result = text
-    
     for name, latex in symbols.items():
         pattern = r'\b' + re.escape(name) + r'\b'
         result = re.sub(pattern, latex, result, flags=re.IGNORECASE)
@@ -488,15 +359,7 @@ def replace_symbols(text: str) -> str:
 
 
 def batch_format_questions(questions: List[dict]) -> List[dict]:
-    """
-    Format a batch of questions with math notation.
-    
-    Args:
-        questions: List of question dictionaries with 'text' and 'choices' keys
-        
-    Returns:
-        List of formatted questions
-    """
+    """Format a batch of questions with math notation."""
     formatted_questions = []
     
     for question in questions:
@@ -509,7 +372,6 @@ def batch_format_questions(questions: List[dict]) -> List[dict]:
             formatted_q['choices'] = format_math_choices(question['choices'])
         
         if 'options' in question:
-            # For questions with options dict (A, B, C, D)
             formatted_q['options'] = {
                 key: format_math_question(value)
                 for key, value in question['options'].items()
