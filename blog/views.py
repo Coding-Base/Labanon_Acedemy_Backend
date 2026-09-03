@@ -60,8 +60,16 @@ class BlogViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         # Admins see all, others see only published
         if self.request.user and (self.request.user.is_staff or (hasattr(self.request.user, 'role') and self.request.user.role == 'admin')):
-            return Blog.objects.all().order_by('-created_at')
-        return Blog.objects.filter(is_published=True).order_by('-published_at', '-created_at')
+            queryset = Blog.objects.all().order_by('-created_at')
+        else:
+            queryset = Blog.objects.filter(is_published=True).order_by('-published_at', '-created_at')
+
+        # Filter by slug if provided (used by BlogDetail page for single-post lookup)
+        slug = self.request.query_params.get('slug')
+        if slug:
+            queryset = queryset.filter(slug=slug)
+
+        return queryset
 
     def get_permissions(self):
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
