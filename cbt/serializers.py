@@ -147,7 +147,7 @@ class ExamAttemptDetailSerializer(serializers.ModelSerializer):
         return obj.student_answers.filter(is_correct=True).count()
 
     def get_wrong_count(self, obj):
-        return obj.student_answers.filter(is_correct=False).count()
+        return obj.student_answers.exclude(is_correct=True).count()
 
     def get_percentage_score(self, obj):
         if obj.score is not None:

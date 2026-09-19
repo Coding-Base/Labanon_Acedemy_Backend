@@ -693,7 +693,7 @@ class ExamAttemptViewSet(viewsets.ModelViewSet):
         exam_attempt = self.get_object()
         
         student_answers = exam_attempt.student_answers.all()
-        wrong_answers = student_answers.filter(is_correct=False)
+        wrong_answers = student_answers.exclude(is_correct=True)
 
         wrong_answers_data = []
         for answer in wrong_answers:
