@@ -39,6 +39,15 @@ class ExamViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
     pagination_class = StandardResultsSetPagination
 
+    @action(detail=False, methods=['get'])
+    def popular(self, request):
+        from django.db.models import Count
+        exams = Exam.objects.annotate(
+            attempt_count=Count('attempts')
+        ).order_by('-attempt_count')[:6]
+        serializer = self.get_serializer(exams, many=True)
+        return Response(serializer.data)
+
     @action(detail=True, methods=['get'])
     def subjects(self, request, pk=None):
         """Get all subjects for a specific exam"""
@@ -56,9 +65,16 @@ class SubjectViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'])
     def questions(self, request, pk=None):
-        """Get all questions for a specific subject with pagination"""
+        """Get all questions for a specific subject with pagination and optional year filter"""
         subject = self.get_object()
         questions = subject.questions.all()
+        
+        # Filter by year if specified
+        year_filter = request.query_params.get('year')
+        if year_filter == 'unassigned':
+            questions = questions.filter(Q(year__isnull=True) | Q(year=''))
+        elif year_filter:
+            questions = questions.filter(year=year_filter)
         
         # Apply pagination
         paginator = self.pagination_class()
@@ -66,6 +82,48 @@ class SubjectViewSet(viewsets.ModelViewSet):
         serializer = QuestionSerializer(paginated_questions, many=True)
         
         return paginator.get_paginated_response(serializer.data)
+
+    @action(detail=True, methods=['get'])
+    def available_years(self, request, pk=None):
+        """Get all distinct years for this subject.
+        Unassigned questions are mapped to default '2021' for student visibility,
+        while unassigned_count is reported for admin notifications.
+        """
+        subject = self.get_object()
+        from django.db.models import Count, Q
+
+        DEFAULT_FALLBACK_YEAR = "2021"
+
+        explicit_year_data = list(
+            subject.questions
+            .exclude(Q(year__isnull=True) | Q(year=''))
+            .values('year')
+            .annotate(question_count=Count('id'))
+            .order_by('-year')
+        )
+
+        unassigned_count = subject.questions.filter(
+            Q(year__isnull=True) | Q(year='')
+        ).count()
+
+        years_dict = {item['year']: item['question_count'] for item in explicit_year_data}
+        if unassigned_count > 0:
+            years_dict[DEFAULT_FALLBACK_YEAR] = years_dict.get(DEFAULT_FALLBACK_YEAR, 0) + unassigned_count
+
+        student_years = [
+            {'year': y, 'question_count': count}
+            for y, count in sorted(years_dict.items(), key=lambda x: str(x[0]), reverse=True)
+        ]
+
+        return Response({
+            'subject_id': subject.id,
+            'subject_name': subject.name,
+            'years': student_years,
+            'explicit_years': [item['year'] for item in explicit_year_data],
+            'total_questions': subject.questions.count(),
+            'unassigned_count': unassigned_count,
+            'default_fallback_year': DEFAULT_FALLBACK_YEAR
+        })
 
 
 class QuestionViewSet(viewsets.ModelViewSet):
@@ -414,6 +472,7 @@ class StartExamView(APIView):
             subject_id = data.get('subject')
             num_questions = data.get('num_questions')
             time_limit_minutes = data.get('time_limit_minutes')
+            year = data.get('year')
             test_name = None
             
             if not all([exam_id, subject_id, num_questions, time_limit_minutes]):
@@ -424,7 +483,7 @@ class StartExamView(APIView):
             
             exam = get_object_or_404(Exam, pk=exam_id)
             subject = get_object_or_404(Subject, pk=subject_id)
-            subjects_data = [{'subject_id': subject_id, 'num_questions': num_questions}]
+            subjects_data = [{'subject_id': subject_id, 'num_questions': num_questions, 'year': year}]
         
         # Multi-subject exam
         else:
@@ -517,6 +576,7 @@ class StartExamView(APIView):
         for subject_config in subjects_data:
             subject_id = subject_config.get('subject_id')
             num_questions = subject_config.get('num_questions')
+            year = subject_config.get('year')
             
             if not subject_id or not num_questions:
                 return Response(
@@ -526,6 +586,19 @@ class StartExamView(APIView):
             
             subject_obj = get_object_or_404(Subject, pk=subject_id)
             all_questions = subject_obj.questions.all()
+
+            DEFAULT_FALLBACK_YEAR = "2021"
+            if year and str(year).strip().lower() != 'simulate':
+                selected_year = str(year).strip()
+                if selected_year == DEFAULT_FALLBACK_YEAR:
+                    # Include explicit 2021 AND unassigned questions
+                    all_questions = all_questions.filter(
+                        Q(year=DEFAULT_FALLBACK_YEAR) | Q(year__isnull=True) | Q(year='')
+                    )
+                else:
+                    all_questions = all_questions.filter(year=selected_year)
+            # If year is "simulate", None, or empty, keep all_questions (full random sample)
+
             num_questions = min(int(num_questions), all_questions.count())
             
             # Cap questions per subject for free trial attempts
@@ -533,8 +606,9 @@ class StartExamView(APIView):
                 num_questions = min(num_questions, exam.free_trial_questions_per_subject)
             
             if num_questions < 1:
+                year_msg = f' for year {year}' if (year and str(year).strip().lower() != 'simulate') else ''
                 return Response(
-                    {'detail': f'Not enough questions in subject {subject_obj.name}'},
+                    {'detail': f'Not enough questions in subject {subject_obj.name}{year_msg}'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
@@ -545,7 +619,8 @@ class StartExamView(APIView):
             subjects_info.append({
                 'subject_id': subject_obj.id,
                 'name': subject_obj.name,
-                'num_questions': num_questions
+                'num_questions': num_questions,
+                'year': year or 'simulate'
             })
 
         # Create exam attempt
@@ -680,12 +755,101 @@ class ExamAttemptViewSet(viewsets.ModelViewSet):
     pagination_class = StandardResultsSetPagination
 
     def get_queryset(self):
-        return ExamAttempt.objects.filter(user=self.request.user, is_submitted=True).order_by('-submitted_at')
+        user = self.request.user
+        if not user.is_authenticated:
+            return ExamAttempt.objects.none()
+
+        if self.action in ['retrieve', 'resume']:
+            return ExamAttempt.objects.filter(user=user)
+
+        status = self.request.query_params.get('status', 'submitted')
+        if status == 'in_progress':
+            return ExamAttempt.objects.filter(
+                user=user, is_submitted=False
+            ).order_by('-started_at')
+        return ExamAttempt.objects.filter(
+            user=user, is_submitted=True
+        ).order_by('-submitted_at')
 
     def get_serializer_class(self):
         if self.action == 'retrieve':
             return ExamAttemptDetailSerializer
         return ExamAttemptListSerializer
+
+    @action(detail=True, methods=['get'])
+    def resume(self, request, pk=None):
+        """Resume an active (unsubmitted) exam attempt"""
+        from django.shortcuts import get_object_or_404
+        from django.utils import timezone
+        from django.db.models import Count
+        from rest_framework import status
+
+        exam_attempt = get_object_or_404(ExamAttempt, pk=pk, user=request.user)
+
+        if exam_attempt.is_submitted:
+            return Response(
+                {'error': 'This exam has already been submitted and cannot be resumed.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Calculate time remaining
+        elapsed_seconds = int((timezone.now() - exam_attempt.started_at).total_seconds())
+        total_limit_seconds = exam_attempt.time_limit_minutes * 60
+        remaining_seconds = max(0, total_limit_seconds - elapsed_seconds)
+
+        # If time has fully expired, auto-submit the exam
+        if remaining_seconds <= 0 and total_limit_seconds > 0:
+            exam_attempt.is_submitted = True
+            exam_attempt.submitted_at = timezone.now()
+            exam_attempt.time_taken_seconds = total_limit_seconds
+            # Calculate final score
+            student_answers = exam_attempt.student_answers.all()
+            correct_count = student_answers.filter(is_correct=True).count()
+            exam_attempt.score = float(correct_count)
+            exam_attempt.save()
+
+            return Response({
+                'expired': True,
+                'is_submitted': True,
+                'exam_attempt_id': exam_attempt.id,
+                'error': 'The time limit for this exam has expired. The exam has been automatically submitted.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Group questions in this attempt by subject to reconstruct subjectConfigs
+        distinct_subjects = exam_attempt.student_answers.values(
+            'subject_id', 'subject__name'
+        ).annotate(count=Count('id')).order_by('subject_id')
+
+        subjects_data = []
+        for item in distinct_subjects:
+            s_id = item['subject_id']
+            s_name = item['subject__name'] or (exam_attempt.subject.name if exam_attempt.subject else 'Subject')
+            q_count = item['count']
+            if s_id:
+                subjects_data.append({
+                    'subject_id': s_id,
+                    'subject_name': s_name,
+                    'num_questions': q_count
+                })
+
+        if not subjects_data and exam_attempt.subject:
+            subjects_data.append({
+                'subject_id': exam_attempt.subject.id,
+                'subject_name': exam_attempt.subject.name,
+                'num_questions': exam_attempt.num_questions
+            })
+
+        return Response({
+            'exam_attempt_id': exam_attempt.id,
+            'test_name': exam_attempt.test_name or (exam_attempt.subject.name if exam_attempt.subject else exam_attempt.exam.title),
+            'exam_title': exam_attempt.exam.title,
+            'time_limit_minutes': exam_attempt.time_limit_minutes,
+            'time_remaining_seconds': remaining_seconds,
+            'subject_configs': subjects_data,
+            'is_trial_attempt': exam_attempt.is_trial_attempt,
+            'started_at': exam_attempt.started_at,
+            'num_questions': exam_attempt.num_questions
+        })
 
     @action(detail=True, methods=['get'])
     def performance(self, request, pk=None):

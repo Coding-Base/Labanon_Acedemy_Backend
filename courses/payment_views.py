@@ -1027,7 +1027,15 @@ class VerifyPaymentView(APIView):
                                             subject_id=int(subject_id) if subject_id else None,
                                             defaults={'payment': payment}
                                         )
-                                        if exam_identifier and selected_subject_ids and created:
+                                        # If unlock already existed (e.g. was previously revoked or expired), reactivate it with this new payment
+                                        if not created:
+                                            unlock.payment = payment
+                                            unlock.is_active = True
+                                            unlock.revoked_at = None
+                                            unlock.revocation_reason = None
+                                            unlock.expires_at = None
+                                            unlock.save(update_fields=['payment', 'is_active', 'revoked_at', 'revocation_reason', 'expires_at'])
+                                        if exam_identifier and selected_subject_ids:
                                             try:
                                                 from cbt.models import Exam, Subject
                                                 exam = None
@@ -2046,7 +2054,15 @@ class VerifyFlutterwavePaymentView(APIView):
                                             subject_id=int(subject_id) if subject_id else None,
                                             defaults={'payment': payment}
                                         )
-                                        if exam_identifier and selected_subject_ids and created:
+                                        # If unlock already existed (e.g. was previously revoked or expired), reactivate it with this new payment
+                                        if not created:
+                                            unlock.payment = payment
+                                            unlock.is_active = True
+                                            unlock.revoked_at = None
+                                            unlock.revocation_reason = None
+                                            unlock.expires_at = None
+                                            unlock.save(update_fields=['payment', 'is_active', 'revoked_at', 'revocation_reason', 'expires_at'])
+                                        if exam_identifier and selected_subject_ids:
                                             try:
                                                 from cbt.models import Exam, Subject
                                                 exam = None

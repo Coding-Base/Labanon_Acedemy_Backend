@@ -594,9 +594,16 @@ def _handle_unlock_payment(payment: Payment):
                     subject_id=int(subject_id) if subject_id else None,
                     defaults={'payment': payment}
                 )
+                if not created:
+                    unlock.payment = payment
+                    unlock.is_active = True
+                    unlock.revoked_at = None
+                    unlock.revocation_reason = None
+                    unlock.expires_at = None
+                    unlock.save(update_fields=['payment', 'is_active', 'revoked_at', 'revocation_reason', 'expires_at'])
                 
                 # For CBT exam unlocks: add selected subjects to M2M relationship (max 5)
-                if exam_identifier and selected_subject_ids and created:
+                if exam_identifier and selected_subject_ids:
                     try:
                         # Validate and limit to dynamic subject limit
                         from cbt.models import Exam

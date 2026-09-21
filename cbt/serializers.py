@@ -68,10 +68,11 @@ class SubjectSerializer(serializers.ModelSerializer):
 class ExamSerializer(serializers.ModelSerializer):
     subjects = SubjectSerializer(many=True, read_only=True)
     subject_count = serializers.SerializerMethodField()
+    attempt_count = serializers.IntegerField(read_only=True, default=0)
 
     class Meta:
         model = Exam
-        fields = ['id', 'title', 'slug', 'description', 'time_limit_minutes', 'free_trial_attempts', 'free_trial_questions_per_subject', 'subject_select_limit', 'subject_count', 'subjects', 'created_at']
+        fields = ['id', 'title', 'slug', 'description', 'time_limit_minutes', 'free_trial_attempts', 'free_trial_questions_per_subject', 'subject_select_limit', 'subject_count', 'subjects', 'created_at', 'attempt_count']
         read_only_fields = ['created_at']
 
     def get_subject_count(self, obj):
