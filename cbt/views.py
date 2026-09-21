@@ -14,6 +14,7 @@ import random
 import csv
 import io
 import json
+import re
 
 from .models import Question, Choice, Exam, ExamAttempt, Subject, StudentAnswer
 from .serializers import (
@@ -25,6 +26,35 @@ from .serializers import (
 from .math_utils import format_math_question
 from users.permissions import IsMasterAdmin
 from courses.models import ActivationUnlock
+
+
+def detect_year_from_text(text: str) -> str:
+    """Extract a 4-digit exam year (1980-2035) from text or identifier."""
+    if not text:
+        return None
+    matches = re.findall(r'\b(19[89]\d|20[0-3]\d)\b', str(text))
+    if matches:
+        return str(matches[0])
+    return None
+
+
+def detect_question_year(question) -> str:
+    """
+    Detect the most appropriate year for a question:
+    1. Check question.text for embedded year pattern
+    2. Check question.explanation for embedded year pattern
+    3. Fallback to question.created_at.year (upload timestamp)
+    4. Fallback to current year
+    """
+    y = detect_year_from_text(getattr(question, 'text', ''))
+    if y:
+        return y
+    y = detect_year_from_text(getattr(question, 'explanation', ''))
+    if y:
+        return y
+    if hasattr(question, 'created_at') and question.created_at:
+        return str(question.created_at.year)
+    return str(timezone.now().year)
 
 
 class StandardResultsSetPagination(PageNumberPagination):
@@ -125,6 +155,36 @@ class SubjectViewSet(viewsets.ModelViewSet):
             'default_fallback_year': DEFAULT_FALLBACK_YEAR
         })
 
+    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsMasterAdmin])
+    def auto_assign_years(self, request, pk=None):
+        """Auto-detect and assign years to all unassigned questions in this subject.
+        Uses embedded year patterns in text/explanation or falls back to upload date (created_at).
+        """
+        subject = self.get_object()
+        from django.db.models import Q
+        unassigned_qs = subject.questions.filter(Q(year__isnull=True) | Q(year=''))
+        total_unassigned = unassigned_qs.count()
+
+        breakdown = {}
+        updated_count = 0
+
+        for q in unassigned_qs:
+            detected_year = detect_question_year(q)
+            q.year = detected_year
+            q.save(update_fields=['year'])
+            updated_count += 1
+            breakdown[detected_year] = breakdown.get(detected_year, 0) + 1
+
+        return Response({
+            'message': f'Successfully upgraded and assigned {updated_count} question(s) to their respective years.',
+            'subject_id': subject.id,
+            'subject_name': subject.name,
+            'total_processed': total_unassigned,
+            'updated_count': updated_count,
+            'breakdown': breakdown,
+            'remaining_unassigned': subject.questions.filter(Q(year__isnull=True) | Q(year='')).count()
+        }, status=status.HTTP_200_OK)
+
 
 class QuestionViewSet(viewsets.ModelViewSet):
     queryset = Question.objects.all()
@@ -210,6 +270,49 @@ class QuestionViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+    @action(detail=False, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsMasterAdmin])
+    def auto_assign_all_years(self, request):
+        """Auto-detect and assign years to ALL unassigned questions across all subjects."""
+        from django.db.models import Q
+        unassigned_qs = Question.objects.filter(Q(year__isnull=True) | Q(year=''))
+        total_unassigned = unassigned_qs.count()
+
+        breakdown = {}
+        updated_count = 0
+
+        for q in unassigned_qs:
+            detected_year = detect_question_year(q)
+            q.year = detected_year
+            q.save(update_fields=['year'])
+            updated_count += 1
+            breakdown[detected_year] = breakdown.get(detected_year, 0) + 1
+
+        return Response({
+            'message': f'Successfully upgraded and assigned {updated_count} question(s) across all subjects.',
+            'total_processed': total_unassigned,
+            'updated_count': updated_count,
+            'breakdown': breakdown,
+            'remaining_unassigned': Question.objects.filter(Q(year__isnull=True) | Q(year='')).count()
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsMasterAdmin])
+    def bulk_assign_year(self, request):
+        """Bulk assign a specific year to a list of question IDs."""
+        question_ids = request.data.get('question_ids', [])
+        year = str(request.data.get('year', '')).strip()
+
+        if not question_ids or not isinstance(question_ids, list):
+            return Response({'detail': 'question_ids array is required'}, status=status.HTTP_400_BAD_REQUEST)
+        if not year:
+            return Response({'detail': 'year is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        updated_count = Question.objects.filter(id__in=question_ids).update(year=year)
+        return Response({
+            'message': f'Successfully assigned year {year} to {updated_count} question(s).',
+            'updated_count': updated_count,
+            'year': year
+        }, status=status.HTTP_200_OK)
+
 
 class BulkQuestionUploadView(APIView):
     """Accept JSON bulk uploads of questions in the specified format.
@@ -260,12 +363,6 @@ class BulkQuestionUploadView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        if not subject_name:
-            return Response(
-                {'detail': 'subject is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
         if not questions_list:
             return Response(
                 {'detail': 'questions array is required and cannot be empty'},
@@ -278,6 +375,19 @@ class BulkQuestionUploadView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        # If subject is not provided at top level, check if first question has subject
+        if not subject_name:
+            for q in questions_list:
+                if q.get('subject'):
+                    subject_name = q.get('subject')
+                    break
+
+        if not subject_name:
+            return Response(
+                {'detail': 'subject is required (either at top-level or inside questions)'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         # Find exam by title or slug
         try:
             exam = Exam.objects.get(Q(title__iexact=exam_id) | Q(slug__iexact=exam_id))
@@ -287,7 +397,7 @@ class BulkQuestionUploadView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        # Find the subject
+        # Find the default subject
         try:
             subject = Subject.objects.get(exam=exam, name__iexact=subject_name)
         except Subject.DoesNotExist:
@@ -304,8 +414,8 @@ class BulkQuestionUploadView(APIView):
         subject_name = request.data.get('subject')
         year = request.data.get('year')
 
-        if not exam_id or not subject_name:
-            return Response({'detail': 'exam_id and subject are required'}, status=status.HTTP_400_BAD_REQUEST)
+        if not exam_id:
+            return Response({'detail': 'exam_id is required'}, status=status.HTTP_400_BAD_REQUEST)
 
         # Find exam
         try:
@@ -313,55 +423,125 @@ class BulkQuestionUploadView(APIView):
         except Exam.DoesNotExist:
             return Response({'detail': f'Exam "{exam_id}" not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-        # Find subject
-        try:
-            subject = Subject.objects.get(exam=exam, name__iexact=subject_name)
-        except Subject.DoesNotExist:
-            return Response({'detail': f'Subject "{subject_name}" not found.'}, status=status.HTTP_404_NOT_FOUND)
-
         questions_list = []
-        
+
         try:
+            if hasattr(file_obj, 'seek'):
+                file_obj.seek(0)
+
             if file_obj.name.endswith('.csv'):
                 decoded_file = file_obj.read().decode('utf-8-sig')
                 io_string = io.StringIO(decoded_file)
                 reader = csv.DictReader(io_string)
                 for row in reader:
-                    # Expected CSV columns: question_text, option_a, option_b, option_c, option_d, correct_answer, explanation
+                    # Clean dictionary with lowercased and stripped keys
+                    cleaned_row = {
+                        str(k).strip().lower(): str(v).strip() if v is not None else ''
+                        for k, v in row.items() if k is not None
+                    }
+
+                    # Extract options (supports option_a, optiona, opt_a, a, etc.)
                     options = {}
-                    for key, value in row.items():
-                        if key.lower().startswith('option_') and value:
-                            opt_key = key.split('_')[1].upper()
-                            options[opt_key] = value
-                    
+                    for k, v in cleaned_row.items():
+                        if not v:
+                            continue
+                        if k.startswith('option_') or k.startswith('option'):
+                            opt_key = k.replace('option_', '').replace('option', '').strip().upper()
+                            if opt_key and len(opt_key) <= 2:
+                                options[opt_key] = v
+                        elif k.startswith('opt_'):
+                            opt_key = k.replace('opt_', '').strip().upper()
+                            if opt_key and len(opt_key) <= 2:
+                                options[opt_key] = v
+                        elif k in ['a', 'b', 'c', 'd', 'e']:
+                            options[k.upper()] = v
+
+                    # Extract fields with multiple possible header names
+                    q_text = (
+                        cleaned_row.get('question_text') or 
+                        cleaned_row.get('question') or 
+                        cleaned_row.get('text') or ''
+                    )
+                    correct_ans = (
+                        cleaned_row.get('correct_answer') or 
+                        cleaned_row.get('answer') or 
+                        cleaned_row.get('correct') or ''
+                    )
+                    q_year = (
+                        cleaned_row.get('year') or 
+                        cleaned_row.get('exam_year') or 
+                        cleaned_row.get('session') or ''
+                    )
+                    q_subject = (
+                        cleaned_row.get('subject') or 
+                        cleaned_row.get('subject_name') or ''
+                    )
+
                     questions_list.append({
-                        'question_text': row.get('question_text'),
+                        'question_text': q_text,
                         'options': options,
-                        'correct_answer': row.get('correct_answer'),
-                        'explanation': row.get('explanation', ''),
-                        'id': row.get('id', '')
+                        'correct_answer': correct_ans,
+                        'explanation': cleaned_row.get('explanation', '') or cleaned_row.get('solution', ''),
+                        'id': cleaned_row.get('id', ''),
+                        'year': q_year,
+                        'subject': q_subject
                     })
             elif file_obj.name.endswith('.xlsx') or file_obj.name.endswith('.xls'):
                 try:
                     import openpyxl
                     wb = openpyxl.load_workbook(file_obj)
                     ws = wb.active
-                    headers = [cell.value for cell in ws[1]]
+                    headers = [str(cell.value).strip().lower() if cell.value else '' for cell in ws[1]]
                     for row in ws.iter_rows(min_row=2, values_only=True):
                         row_dict = dict(zip(headers, row))
-                        # Logic similar to CSV...
-                        # For brevity, assuming similar structure or user installs openpyxl
-                        pass 
+                        # Similar logic for excel
+                        options = {}
+                        for k, v in row_dict.items():
+                            if not v:
+                                continue
+                            if k.startswith('option_') or k.startswith('option'):
+                                opt_key = k.replace('option_', '').replace('option', '').strip().upper()
+                                if opt_key:
+                                    options[opt_key] = str(v).strip()
+                            elif k in ['a', 'b', 'c', 'd', 'e']:
+                                options[k.upper()] = str(v).strip()
+
+                        questions_list.append({
+                            'question_text': str(row_dict.get('question_text') or row_dict.get('question') or ''),
+                            'options': options,
+                            'correct_answer': str(row_dict.get('correct_answer') or row_dict.get('answer') or ''),
+                            'explanation': str(row_dict.get('explanation') or ''),
+                            'id': str(row_dict.get('id') or ''),
+                            'year': str(row_dict.get('year') or ''),
+                            'subject': str(row_dict.get('subject') or '')
+                        })
                 except ImportError:
                     return Response({'detail': 'openpyxl library not installed for Excel support'}, status=status.HTTP_501_NOT_IMPLEMENTED)
         except Exception as e:
             return Response({'detail': f'Error processing file: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Determine subject if not specified at top level
+        if not subject_name:
+            for q in questions_list:
+                if q.get('subject'):
+                    subject_name = q.get('subject')
+                    break
+
+        if not subject_name:
+            return Response({'detail': 'subject is required (either in request parameters or in file rows)'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Find subject
+        try:
+            subject = Subject.objects.get(exam=exam, name__iexact=subject_name)
+        except Subject.DoesNotExist:
+            return Response({'detail': f'Subject "{subject_name}" not found.'}, status=status.HTTP_404_NOT_FOUND)
 
         return self.process_questions(questions_list, subject, year, request.user, exam)
 
     def process_questions(self, questions_list, subject, year, user, exam):
         created_questions = []
         errors = []
+        years_summary = {}
 
         if not questions_list:
             return Response({
@@ -410,11 +590,29 @@ class BulkQuestionUploadView(APIView):
                     errors.append(f"{question_id}: correct_answer '{correct_answer}' must be one of {list(options.keys())}")
                     continue
 
-                # Create question (save explanation if provided)
+                # Determine question year:
+                # 1. Per-question year (from JSON question or CSV row)
+                # 2. Top-level year argument
+                # 3. Detect from text or explanation
+                # 4. Fallback to current year
+                q_year = str(q_data.get('year') or year or '').strip()
+                if not q_year:
+                    q_year = detect_year_from_text(question_text) or detect_year_from_text(explanation) or str(timezone.now().year)
+
+                # Determine target subject (supports per-question subject override)
+                target_subject = subject
+                q_subject_name = q_data.get('subject')
+                if q_subject_name and str(q_subject_name).strip().lower() != subject.name.lower():
+                    try:
+                        target_subject = Subject.objects.get(exam=exam, name__iexact=str(q_subject_name).strip())
+                    except Subject.DoesNotExist:
+                        target_subject = subject
+
+                # Create question with determined year and subject
                 question = Question.objects.create(
-                    subject=subject,
+                    subject=target_subject,
                     text=question_text,
-                    year=str(year) if year else None,
+                    year=q_year,
                     explanation=explanation,
                     creator=user
                 )
@@ -430,8 +628,11 @@ class BulkQuestionUploadView(APIView):
 
                 created_questions.append({
                     'id': question.id,
-                    'text': question_text[:50] + '...' if len(question_text) > 50 else question_text
+                    'text': question_text[:50] + '...' if len(question_text) > 50 else question_text,
+                    'year': q_year,
+                    'subject': target_subject.name
                 })
+                years_summary[q_year] = years_summary.get(q_year, 0) + 1
 
             except Exception as e:
                 errors.append(f"{q_data.get('id', f'Question {idx}')}: {str(e)}")
@@ -450,9 +651,10 @@ class BulkQuestionUploadView(APIView):
             'success': len(created_questions),
             'total': len(questions_list),
             'created': created_questions,
+            'years_summary': years_summary,
             'errors': errors if errors else None,
             'exam': exam.title,
-            'year': year
+            'default_subject': subject.name
         }, status=status.HTTP_201_CREATED)
 
 
