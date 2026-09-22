@@ -40,11 +40,8 @@ def detect_year_from_text(text: str) -> str:
 
 def detect_question_year(question) -> str:
     """
-    Detect the most appropriate year for a question:
-    1. Check question.text for embedded year pattern
-    2. Check question.explanation for embedded year pattern
-    3. Fallback to question.created_at.year (upload timestamp)
-    4. Fallback to current year
+    Detect the most appropriate year for a question from text or explanation.
+    Never falls back to upload date (created_at) to avoid corrupting question years.
     """
     y = detect_year_from_text(getattr(question, 'text', ''))
     if y:
@@ -52,9 +49,7 @@ def detect_question_year(question) -> str:
     y = detect_year_from_text(getattr(question, 'explanation', ''))
     if y:
         return y
-    if hasattr(question, 'created_at') and question.created_at:
-        return str(question.created_at.year)
-    return str(timezone.now().year)
+    return None
 
 
 class StandardResultsSetPagination(PageNumberPagination):
@@ -170,10 +165,11 @@ class SubjectViewSet(viewsets.ModelViewSet):
 
         for q in unassigned_qs:
             detected_year = detect_question_year(q)
-            q.year = detected_year
-            q.save(update_fields=['year'])
-            updated_count += 1
-            breakdown[detected_year] = breakdown.get(detected_year, 0) + 1
+            if detected_year:
+                q.year = detected_year
+                q.save(update_fields=['year'])
+                updated_count += 1
+                breakdown[detected_year] = breakdown.get(detected_year, 0) + 1
 
         return Response({
             'message': f'Successfully upgraded and assigned {updated_count} question(s) to their respective years.',
@@ -282,10 +278,11 @@ class QuestionViewSet(viewsets.ModelViewSet):
 
         for q in unassigned_qs:
             detected_year = detect_question_year(q)
-            q.year = detected_year
-            q.save(update_fields=['year'])
-            updated_count += 1
-            breakdown[detected_year] = breakdown.get(detected_year, 0) + 1
+            if detected_year:
+                q.year = detected_year
+                q.save(update_fields=['year'])
+                updated_count += 1
+                breakdown[detected_year] = breakdown.get(detected_year, 0) + 1
 
         return Response({
             'message': f'Successfully upgraded and assigned {updated_count} question(s) across all subjects.',
@@ -594,10 +591,12 @@ class BulkQuestionUploadView(APIView):
                 # 1. Per-question year (from JSON question or CSV row)
                 # 2. Top-level year argument
                 # 3. Detect from text or explanation
-                # 4. Fallback to current year
+                # 4. If none, leave as None (unassigned)
                 q_year = str(q_data.get('year') or year or '').strip()
                 if not q_year:
-                    q_year = detect_year_from_text(question_text) or detect_year_from_text(explanation) or str(timezone.now().year)
+                    q_year = detect_year_from_text(question_text) or detect_year_from_text(explanation) or None
+                else:
+                    q_year = q_year if q_year else None
 
                 # Determine target subject (supports per-question subject override)
                 target_subject = subject
