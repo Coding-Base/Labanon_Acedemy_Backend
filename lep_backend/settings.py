@@ -176,10 +176,15 @@ else:
     DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
 
 # ==================== CORS & CSRF ====================
-CORS_ALLOW_ALL_ORIGINS = False
+# Local development commonly switches between localhost and 127.0.0.1.
+# Keep production origins explicit, while allowing any local dev origin only
+# when Django is running with DEBUG enabled.
+CORS_ALLOW_ALL_ORIGINS = DEBUG
 CORS_ALLOWED_ORIGINS = [
     'http://localhost:5173',
+    'http://127.0.0.1:5173',
     'http://localhost:3000',
+    'http://127.0.0.1:3000',
     'https://lighthubacademy.org',
     'https://www.lighthubacademy.org',
     'https://api.lighthubacademy.org',

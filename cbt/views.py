@@ -8,7 +8,7 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.conf import settings
-from django.db.models import Q
+from django.db.models import Q, Count
 from datetime import timedelta
 import random
 import csv
@@ -16,9 +16,10 @@ import io
 import json
 import re
 
-from .models import Question, Choice, Exam, ExamAttempt, Subject, StudentAnswer
+from .models import Country, ExamFolder, Question, QuestionAssignment, Choice, Exam, ExamAttempt, Subject, StudentAnswer
+from .permissions import CanManageExamLibrary
 from .serializers import (
-    QuestionSerializer, ChoiceSerializer, ExamSerializer, 
+    CountrySerializer, ExamFolderSerializer, QuestionSerializer, ChoiceSerializer, ExamSerializer,
     ExamAttemptListSerializer, ExamAttemptDetailSerializer,
     ExamAttemptCreateSerializer, StudentAnswerSerializer,
     SubmitAnswerSerializer, SubjectSerializer
@@ -58,6 +59,221 @@ class StandardResultsSetPagination(PageNumberPagination):
     max_page_size = 100
 
 
+def student_visible_queryset(queryset):
+    """Apply the shared publication and availability rules for student content."""
+    now = timezone.now()
+    return queryset.filter(
+        is_visible=True,
+    ).filter(
+        Q(available_from__isnull=True) | Q(available_from__lte=now)
+    ).filter(
+        Q(status='published') | Q(status='scheduled', available_from__lte=now)
+    ).filter(
+        Q(available_until__isnull=True) | Q(available_until__gt=now)
+    )
+
+
+def student_visible_window_filter():
+    now = timezone.now()
+    return (
+        Q(is_visible=True)
+        & (Q(available_from__isnull=True) | Q(available_from__lte=now))
+        & (Q(status='published') | Q(status='scheduled', available_from__lte=now))
+        & (Q(available_until__isnull=True) | Q(available_until__gt=now))
+    )
+
+
+class ExamLibraryView(APIView):
+    """Return the published country/folder/exam tree for the student portal."""
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+
+    def get(self, request):
+        query = request.query_params.get('q', '').strip()
+        visible = student_visible_window_filter()
+        countries = Country.objects.filter(visible).order_by('sort_order', 'name')
+        folders = list(
+            ExamFolder.objects.filter(visible)
+            .select_related('country', 'parent')
+            .order_by('sort_order', 'name')
+        )
+        exams = list(
+            Exam.objects.filter(visible)
+            .select_related('folder__country')
+            .prefetch_related('subjects__questions')
+            .annotate(attempt_count=Count('attempts'))
+            .order_by('sort_order', 'title')
+        )
+
+        if query:
+            match = query.lower()
+            matching_exam_ids = {
+                exam.id for exam in exams
+                if match in ' '.join([
+                    exam.title, exam.description, exam.institution,
+                    exam.provider, exam.exam_type, exam.year, exam.difficulty,
+                    exam.folder.name if exam.folder else '',
+                    exam.folder.country.name if exam.folder and exam.folder.country else '',
+                    ' '.join(subject.name for subject in exam.subjects.all()),
+                ]).lower()
+            }
+            matching_folder_ids = {
+                folder.id for folder in folders
+                if match in f'{folder.name} {folder.description}'.lower()
+            }
+            matching_country_ids = {
+                country.id for country in countries
+                if match in f'{country.name} {country.code}'.lower()
+            }
+            for country in countries:
+                if country.id in matching_country_ids:
+                    matching_folder_ids.update(folder.id for folder in folders if folder.country_id == country.id)
+                    matching_exam_ids.update(exam.id for exam in exams if exam.folder and exam.folder.country_id == country.id)
+        else:
+            matching_exam_ids = {exam.id for exam in exams}
+            matching_folder_ids = {folder.id for folder in folders}
+            matching_country_ids = {country.id for country in countries}
+
+        exams_by_folder = {}
+        for exam in exams:
+            if exam.id in matching_exam_ids and exam.folder_id:
+                exams_by_folder.setdefault(exam.folder_id, []).append(
+                    ExamSerializer(exam, context={'request': request}).data
+                )
+
+        children_by_parent = {}
+        for folder in folders:
+            children_by_parent.setdefault(folder.parent_id, []).append(folder)
+
+        def build_folder(folder):
+            children = []
+            for child in children_by_parent.get(folder.id, []):
+                child_data = build_folder(child)
+                if child_data:
+                    children.append(child_data)
+            folder_exams = exams_by_folder.get(folder.id, [])
+            folder_matches = folder.id in matching_folder_ids
+            if not (folder_matches or folder_exams or children):
+                return None
+            return {
+                **ExamFolderSerializer(folder, context={'request': request}).data,
+                'children': children,
+                'exams': folder_exams,
+            }
+
+        result = []
+        for country in countries:
+            country_folders = [
+                build_folder(folder)
+                for folder in children_by_parent.get(None, [])
+                if folder.country_id == country.id
+            ]
+            country_folders = [folder for folder in country_folders if folder]
+            if country.id not in matching_country_ids and not country_folders:
+                continue
+            result.append({
+                **CountrySerializer(country, context={'request': request}).data,
+                'folders': country_folders,
+            })
+
+        return Response({'results': result, 'query': query})
+
+
+class CountryViewSet(viewsets.ModelViewSet):
+    queryset = Country.objects.all()
+    serializer_class = CountrySerializer
+    pagination_class = StandardResultsSetPagination
+
+    def get_permissions(self):
+        if self.request.method in permissions.SAFE_METHODS:
+            return [permissions.IsAuthenticatedOrReadOnly()]
+        return [CanManageExamLibrary()]
+
+    def get_queryset(self):
+        queryset = super().get_queryset().order_by('sort_order', 'name')
+        if self.request.method in permissions.SAFE_METHODS and not CanManageExamLibrary().has_permission(self.request, self):
+            return queryset.filter(student_visible_window_filter())
+        return queryset
+
+    def perform_destroy(self, instance):
+        if instance.folders.exists():
+            instance.status = 'archived'
+            instance.is_visible = False
+            instance.save(update_fields=['status', 'is_visible', 'updated_at'])
+        else:
+            instance.delete()
+
+
+class ExamFolderViewSet(viewsets.ModelViewSet):
+    queryset = ExamFolder.objects.select_related('country', 'parent').all()
+    serializer_class = ExamFolderSerializer
+    pagination_class = StandardResultsSetPagination
+
+    def get_permissions(self):
+        if self.request.method in permissions.SAFE_METHODS:
+            return [permissions.IsAuthenticatedOrReadOnly()]
+        return [CanManageExamLibrary()]
+
+    def get_queryset(self):
+        queryset = super().get_queryset().order_by('country_id', 'sort_order', 'name')
+        if self.request.method in permissions.SAFE_METHODS and not CanManageExamLibrary().has_permission(self.request, self):
+            return queryset.filter(student_visible_window_filter())
+        country_id = self.request.query_params.get('country')
+        parent_id = self.request.query_params.get('parent')
+        if country_id:
+            queryset = queryset.filter(country_id=country_id)
+        if parent_id == 'root':
+            queryset = queryset.filter(parent__isnull=True)
+        elif parent_id:
+            queryset = queryset.filter(parent_id=parent_id)
+        return queryset
+
+    @action(detail=True, methods=['get'])
+    def contents(self, request, pk=None):
+        folder = self.get_object()
+        children = self.get_queryset().filter(parent=folder).order_by('sort_order', 'name')
+        exams = Exam.objects.filter(folder=folder).select_related('folder__country').prefetch_related('subjects__questions').annotate(
+            attempt_count=Count('attempts')
+        ).order_by('sort_order', 'title')
+        if not CanManageExamLibrary().has_permission(request, self):
+            exams = exams.filter(student_visible_window_filter())
+        return Response({
+            'folder': ExamFolderSerializer(folder, context={'request': request}).data,
+            'children': ExamFolderSerializer(children, many=True, context={'request': request}).data,
+            'exams': ExamSerializer(exams, many=True, context={'request': request}).data,
+        })
+
+    @action(detail=False, methods=['post'])
+    def reorder(self, request):
+        items = request.data.get('items', [])
+        if not isinstance(items, list):
+            return Response({'detail': 'items must be an array'}, status=status.HTTP_400_BAD_REQUEST)
+        item_ids = [item.get('id') for item in items]
+        if len(item_ids) != len(set(item_ids)):
+            return Response({'detail': 'items must not contain duplicate folder ids'}, status=status.HTTP_400_BAD_REQUEST)
+        folders = list(self.get_queryset().filter(id__in=item_ids))
+        if len(folders) != len(item_ids):
+            return Response({'detail': 'One or more folders do not exist.'}, status=status.HTTP_400_BAD_REQUEST)
+        sibling_keys = {(folder.country_id, folder.parent_id) for folder in folders}
+        if len(sibling_keys) > 1:
+            return Response({'detail': 'Folders can only be reordered with their siblings.'}, status=status.HTTP_400_BAD_REQUEST)
+        by_id = {folder.id: folder for folder in folders}
+        for item in items:
+            folder = by_id.get(item.get('id'))
+            if folder is not None:
+                folder.sort_order = int(item.get('sort_order', 0))
+                folder.updated_at = timezone.now()
+        ExamFolder.objects.bulk_update(folders, ['sort_order', 'updated_at'])
+        return Response(ExamFolderSerializer(folders, many=True, context={'request': request}).data)
+
+    def perform_destroy(self, instance):
+        if instance.children.exists() or instance.exams.exists():
+            instance.status = 'archived'
+            instance.is_visible = False
+            instance.save(update_fields=['status', 'is_visible', 'updated_at'])
+        else:
+            instance.delete()
+
+
 class ExamViewSet(viewsets.ModelViewSet):
     queryset = Exam.objects.all()
     serializer_class = ExamSerializer
@@ -66,12 +282,66 @@ class ExamViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def popular(self, request):
-        from django.db.models import Count
-        exams = Exam.objects.annotate(
-            attempt_count=Count('attempts')
-        ).order_by('-attempt_count')[:6]
+        exams = self.get_queryset().order_by('-attempt_count', 'title')[:6]
         serializer = self.get_serializer(exams, many=True)
         return Response(serializer.data)
+
+    def get_permissions(self):
+        if self.request.method in permissions.SAFE_METHODS:
+            return [permissions.IsAuthenticatedOrReadOnly()]
+        return [CanManageExamLibrary()]
+
+    def get_queryset(self):
+        queryset = Exam.objects.select_related('folder__country').prefetch_related('subjects__questions').annotate(
+            attempt_count=Count('attempts')
+        )
+        if self.request.method in permissions.SAFE_METHODS and not CanManageExamLibrary().has_permission(self.request, self):
+            queryset = queryset.filter(student_visible_window_filter())
+        return queryset.order_by('sort_order', 'title')
+
+    @action(detail=True, methods=['post'], permission_classes=[CanManageExamLibrary])
+    def publish(self, request, pk=None):
+        exam = self.get_object()
+        exam.status = 'published'
+        exam.is_visible = True
+        exam.save(update_fields=['status', 'is_visible', 'updated_at'])
+        return Response(self.get_serializer(exam).data)
+
+    @action(detail=True, methods=['post'], permission_classes=[CanManageExamLibrary])
+    def schedule(self, request, pk=None):
+        exam = self.get_object()
+        available_from = request.data.get('available_from', exam.available_from)
+        if not available_from:
+            return Response({'available_from': 'A scheduled exam requires an availability date.'}, status=status.HTTP_400_BAD_REQUEST)
+        serializer = self.get_serializer(exam, data={
+            'status': 'scheduled',
+            'is_visible': request.data.get('is_visible', True),
+            'available_from': available_from,
+            'available_until': request.data.get('available_until', exam.available_until),
+        }, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post'], permission_classes=[CanManageExamLibrary])
+    def archive(self, request, pk=None):
+        exam = self.get_object()
+        exam.status = 'archived'
+        exam.is_visible = False
+        exam.save(update_fields=['status', 'is_visible', 'updated_at'])
+        return Response(self.get_serializer(exam).data)
+
+    @action(detail=True, methods=['get'], permission_classes=[CanManageExamLibrary])
+    def preview(self, request, pk=None):
+        return Response(self.get_serializer(self.get_object()).data)
+
+    def perform_destroy(self, instance):
+        if instance.attempts.exists() or instance.subjects.exists():
+            instance.status = 'archived'
+            instance.is_visible = False
+            instance.save(update_fields=['status', 'is_visible', 'updated_at'])
+        else:
+            instance.delete()
 
     @action(detail=True, methods=['get'])
     def subjects(self, request, pk=None):
@@ -88,11 +358,18 @@ class SubjectViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
     pagination_class = StandardResultsSetPagination
 
+    def get_permissions(self):
+        if self.request.method in permissions.SAFE_METHODS:
+            return [permissions.IsAuthenticatedOrReadOnly()]
+        return [CanManageExamLibrary()]
+
     @action(detail=True, methods=['get'])
     def questions(self, request, pk=None):
         """Get all questions for a specific subject with pagination and optional year filter"""
         subject = self.get_object()
-        questions = subject.questions.all()
+        questions = Question.objects.filter(
+            Q(subject=subject) | Q(assignments__subject=subject)
+        ).distinct()
         
         # Filter by year if specified
         year_filter = request.query_params.get('year')
@@ -120,14 +397,14 @@ class SubjectViewSet(viewsets.ModelViewSet):
         DEFAULT_FALLBACK_YEAR = "2021"
 
         explicit_year_data = list(
-            subject.questions
+            Question.objects.filter(Q(subject=subject) | Q(assignments__subject=subject)).distinct()
             .exclude(Q(year__isnull=True) | Q(year=''))
             .values('year')
             .annotate(question_count=Count('id'))
             .order_by('-year')
         )
 
-        unassigned_count = subject.questions.filter(
+        unassigned_count = Question.objects.filter(Q(subject=subject) | Q(assignments__subject=subject)).filter(
             Q(year__isnull=True) | Q(year='')
         ).count()
 
@@ -145,12 +422,12 @@ class SubjectViewSet(viewsets.ModelViewSet):
             'subject_name': subject.name,
             'years': student_years,
             'explicit_years': [item['year'] for item in explicit_year_data],
-            'total_questions': subject.questions.count(),
+            'total_questions': Question.objects.filter(Q(subject=subject) | Q(assignments__subject=subject)).distinct().count(),
             'unassigned_count': unassigned_count,
             'default_fallback_year': DEFAULT_FALLBACK_YEAR
         })
 
-    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsMasterAdmin])
+    @action(detail=True, methods=['post'], permission_classes=[CanManageExamLibrary])
     def auto_assign_years(self, request, pk=None):
         """Auto-detect and assign years to all unassigned questions in this subject.
         Uses embedded year patterns in text/explanation or falls back to upload date (created_at).
@@ -186,6 +463,25 @@ class QuestionViewSet(viewsets.ModelViewSet):
     queryset = Question.objects.all()
     serializer_class = QuestionSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+
+    def get_permissions(self):
+        if self.request.method in permissions.SAFE_METHODS:
+            return [permissions.IsAuthenticatedOrReadOnly()]
+        return [CanManageExamLibrary()]
+
+    @action(detail=True, methods=['post'], permission_classes=[CanManageExamLibrary])
+    def assign_subjects(self, request, pk=None):
+        """Attach a bank question to additional subjects without changing its owner."""
+        question = self.get_object()
+        subject_ids = request.data.get('subject_ids', [])
+        if not isinstance(subject_ids, list):
+            return Response({'detail': 'subject_ids must be an array'}, status=status.HTTP_400_BAD_REQUEST)
+        subjects = list(Subject.objects.filter(id__in=subject_ids))
+        if len(subjects) != len(set(subject_ids)):
+            return Response({'detail': 'One or more subjects do not exist.'}, status=status.HTTP_400_BAD_REQUEST)
+        for subject in subjects:
+            QuestionAssignment.objects.get_or_create(question=question, subject=subject)
+        return Response({'question_id': question.id, 'subject_ids': [subject.id for subject in subjects]})
 
     @action(detail=True, methods=['post'])
     def update_choices(self, request, pk=None):
@@ -266,7 +562,7 @@ class QuestionViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-    @action(detail=False, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsMasterAdmin])
+    @action(detail=False, methods=['post'], permission_classes=[CanManageExamLibrary])
     def auto_assign_all_years(self, request):
         """Auto-detect and assign years to ALL unassigned questions across all subjects."""
         from django.db.models import Q
@@ -292,7 +588,7 @@ class QuestionViewSet(viewsets.ModelViewSet):
             'remaining_unassigned': Question.objects.filter(Q(year__isnull=True) | Q(year='')).count()
         }, status=status.HTTP_200_OK)
 
-    @action(detail=False, methods=['post'], permission_classes=[permissions.IsAuthenticated, IsMasterAdmin])
+    @action(detail=False, methods=['post'], permission_classes=[CanManageExamLibrary])
     def bulk_assign_year(self, request):
         """Bulk assign a specific year to a list of question IDs."""
         question_ids = request.data.get('question_ids', [])
@@ -337,7 +633,7 @@ class BulkQuestionUploadView(APIView):
     }
     Also supports CSV/Excel file upload via multipart/form-data.
     """
-    permission_classes = [IsMasterAdmin]
+    permission_classes = [CanManageExamLibrary]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def post(self, request):
@@ -786,7 +1082,9 @@ class StartExamView(APIView):
                 )
             
             subject_obj = get_object_or_404(Subject, pk=subject_id)
-            all_questions = subject_obj.questions.all()
+            all_questions = Question.objects.filter(
+                Q(subject=subject_obj) | Q(assignments__subject=subject_obj)
+            ).distinct()
 
             DEFAULT_FALLBACK_YEAR = "2021"
             if year and str(year).strip().lower() != 'simulate':

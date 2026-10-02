@@ -1,5 +1,7 @@
 from rest_framework import serializers
-from .models import Question, Choice, Exam, ExamAttempt, Subject, StudentAnswer
+from .models import Country, ExamFolder, Question, Choice, Exam, ExamAttempt, Subject, StudentAnswer
+from django.db.models import Q
+from django.utils.text import slugify
 from .math_utils import format_math_question, format_math_choices
 import json
 import re
@@ -11,6 +13,66 @@ def format_math_text(text):
     Uses centralized math_utils module.
     """
     return format_math_question(text)
+
+
+class CountrySerializer(serializers.ModelSerializer):
+    folder_count = serializers.SerializerMethodField()
+    exam_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Country
+        fields = [
+            'id', 'name', 'code', 'slug', 'flag_image', 'sort_order', 'status',
+            'is_visible', 'available_from', 'available_until', 'folder_count',
+            'exam_count', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at', 'folder_count', 'exam_count']
+
+    def get_folder_count(self, obj):
+        return obj.folders.count()
+
+    def get_exam_count(self, obj):
+        return Exam.objects.filter(folder__country=obj).count()
+
+
+class ExamFolderSerializer(serializers.ModelSerializer):
+    child_count = serializers.SerializerMethodField()
+    exam_count = serializers.SerializerMethodField()
+    country_name = serializers.CharField(source='country.name', read_only=True)
+    parent_name = serializers.CharField(source='parent.name', read_only=True)
+
+    class Meta:
+        model = ExamFolder
+        fields = [
+            'id', 'country', 'country_name', 'parent', 'parent_name', 'name', 'slug',
+            'description', 'icon', 'cover_image', 'sort_order', 'status', 'is_visible',
+            'available_from', 'available_until', 'child_count', 'exam_count',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at', 'child_count', 'exam_count']
+
+    def validate(self, attrs):
+        instance = self.instance
+        country = attrs.get('country', instance.country if instance else None)
+        parent = attrs.get('parent', instance.parent if instance else None)
+
+        if parent and country and parent.country_id != country.id:
+            raise serializers.ValidationError({'parent': 'The parent folder must belong to the same country.'})
+        if instance and parent and parent.pk == instance.pk:
+            raise serializers.ValidationError({'parent': 'A folder cannot be its own parent.'})
+
+        ancestor = parent
+        while ancestor:
+            if instance and ancestor.pk == instance.pk:
+                raise serializers.ValidationError({'parent': 'Folder nesting cannot contain a cycle.'})
+            ancestor = ancestor.parent
+        return attrs
+
+    def get_child_count(self, obj):
+        return obj.children.count()
+
+    def get_exam_count(self, obj):
+        return obj.exams.count()
 
 
 class ChoiceSerializer(serializers.ModelSerializer):
@@ -27,10 +89,11 @@ class ChoiceSerializer(serializers.ModelSerializer):
 
 class QuestionSerializer(serializers.ModelSerializer):
     choices = ChoiceSerializer(many=True, required=False)
+    assigned_subject_ids = serializers.SerializerMethodField()
 
     class Meta:
         model = Question
-        fields = ['id', 'subject', 'text', 'image', 'choices', 'year', 'created_at']
+        fields = ['id', 'subject', 'text', 'image', 'choices', 'year', 'created_at', 'assigned_subject_ids']
         read_only_fields = ['created_at']
 
     def to_representation(self, instance):
@@ -52,6 +115,9 @@ class QuestionSerializer(serializers.ModelSerializer):
             Choice.objects.create(question=question, **choice_data)
         return question
 
+    def get_assigned_subject_ids(self, obj):
+        return list(obj.assignments.values_list('subject_id', flat=True))
+
 
 class SubjectSerializer(serializers.ModelSerializer):
     question_count = serializers.SerializerMethodField()
@@ -62,22 +128,66 @@ class SubjectSerializer(serializers.ModelSerializer):
         read_only_fields = ['created_at']
 
     def get_question_count(self, obj):
-        return obj.questions.count()
+        return Question.objects.filter(
+            Q(subject=obj) | Q(assignments__subject=obj)
+        ).distinct().count()
 
 
 class ExamSerializer(serializers.ModelSerializer):
     subjects = SubjectSerializer(many=True, read_only=True)
     subject_count = serializers.SerializerMethodField()
+    question_count = serializers.SerializerMethodField()
     attempt_count = serializers.IntegerField(read_only=True, default=0)
+    slug = serializers.SlugField(required=False, allow_blank=True)
+    country = serializers.IntegerField(source='folder.country_id', read_only=True)
+    country_name = serializers.CharField(source='folder.country.name', read_only=True)
+    folder_name = serializers.CharField(source='folder.name', read_only=True)
 
     class Meta:
         model = Exam
-        fields = ['id', 'title', 'slug', 'description', 'time_limit_minutes', 'free_trial_attempts', 'free_trial_questions_per_subject', 'subject_select_limit', 'subject_count', 'subjects', 'created_at', 'attempt_count']
-        read_only_fields = ['created_at']
+        fields = [
+            'id', 'title', 'slug', 'description', 'folder', 'country', 'country_name',
+            'folder_name', 'institution', 'provider', 'exam_type', 'year', 'difficulty',
+            'sort_order', 'status', 'is_visible', 'available_from', 'available_until',
+            'time_limit_minutes', 'free_trial_attempts', 'free_trial_questions_per_subject',
+            'subject_select_limit', 'subject_count', 'question_count', 'subjects',
+            'created_at', 'updated_at', 'attempt_count'
+        ]
+        read_only_fields = [
+            'created_at', 'updated_at', 'country', 'country_name', 'folder_name',
+            'subject_count', 'question_count', 'attempt_count'
+        ]
+
+    def _unique_slug(self, value, instance=None):
+        base = slugify(value or 'exam')[:255] or 'exam'
+        candidate = base
+        suffix = 2
+        queryset = Exam.objects.all()
+        if instance is not None:
+            queryset = queryset.exclude(pk=instance.pk)
+        while queryset.filter(slug=candidate).exists():
+            suffix_text = f'-{suffix}'
+            candidate = f'{base[:255 - len(suffix_text)]}{suffix_text}'
+            suffix += 1
+        return candidate
+
+    def create(self, validated_data):
+        if not validated_data.get('slug'):
+            validated_data['slug'] = self._unique_slug(validated_data.get('title'))
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        if not validated_data.get('slug'):
+            validated_data.pop('slug', None)
+        return super().update(instance, validated_data)
 
     def get_subject_count(self, obj):
         return obj.subjects.count()
 
+    def get_question_count(self, obj):
+        return Question.objects.filter(
+            Q(subject__exam=obj) | Q(assignments__subject__exam=obj)
+        ).distinct().count()
 
 class StudentAnswerSerializer(serializers.ModelSerializer):
     question_text = serializers.CharField(source='question.text', read_only=True)

@@ -1,19 +1,22 @@
 from django.urls import path
 from rest_framework.routers import DefaultRouter
 from .views import (
-    ExamViewSet, QuestionViewSet, SubjectViewSet, ExamAttemptViewSet, 
+    CountryViewSet, ExamFolderViewSet, ExamLibraryView, ExamViewSet, QuestionViewSet, SubjectViewSet, ExamAttemptViewSet,
     BulkQuestionUploadView, StartExamView, SubmitAnswerView, SubmitExamView,
     ExamAttemptListView, GetExamQuestionsView, ExamProgressView, AnalyticsView,
     StudentLeaderboardView
 )
 
 router = DefaultRouter()
+router.register(r'countries', CountryViewSet, basename='country')
+router.register(r'folders', ExamFolderViewSet, basename='exam-folder')
 router.register(r'exams', ExamViewSet, basename='exam')
 router.register(r'subjects', SubjectViewSet, basename='subject')
 router.register(r'questions', QuestionViewSet, basename='question')
 router.register(r'attempts', ExamAttemptViewSet, basename='attempt')
 
 urlpatterns = router.urls + [
+    path('library/', ExamLibraryView.as_view(), name='exam-library'),
     # CBT Exam Flow Endpoints
     path('start-exam/', StartExamView.as_view(), name='start-exam'),
     path('attempts/<int:exam_attempt_id>/submit-answer/', SubmitAnswerView.as_view(), name='submit-answer'),

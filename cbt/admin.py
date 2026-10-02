@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.utils.html import format_html
 from django.urls import path
-from .models import Exam, Subject, Question, Choice, ExamAttempt, StudentAnswer
+from .models import Country, ExamFolder, Exam, Subject, Question, QuestionAssignment, Choice, ExamAttempt, StudentAnswer
 from .admin_views import bulk_upload_questions_admin
 
 
@@ -15,10 +15,10 @@ class ExamAdmin(admin.ModelAdmin):
 
     fieldsets = (
         ('Basic Information', {
-            'fields': ('title', 'slug', 'description')
+            'fields': ('title', 'slug', 'description', 'folder', 'institution', 'provider', 'exam_type', 'year', 'difficulty')
         }),
         ('Settings', {
-            'fields': ('time_limit_minutes', 'subject_select_limit', 'free_trial_attempts', 'free_trial_questions_per_subject')
+            'fields': ('time_limit_minutes', 'subject_select_limit', 'free_trial_attempts', 'free_trial_questions_per_subject', 'sort_order', 'status', 'is_visible', 'available_from', 'available_until')
         }),
         ('Timestamps', {
             'fields': ('created_at', 'updated_at'),
@@ -33,6 +33,27 @@ class ExamAdmin(admin.ModelAdmin):
             count
         )
     subject_count.short_description = 'Subjects'
+
+
+@admin.register(Country)
+class CountryAdmin(admin.ModelAdmin):
+    list_display = ['name', 'code', 'status', 'sort_order', 'updated_at']
+    list_filter = ['status', 'is_visible']
+    search_fields = ['name', 'code', 'slug']
+
+
+@admin.register(ExamFolder)
+class ExamFolderAdmin(admin.ModelAdmin):
+    list_display = ['name', 'country', 'parent', 'status', 'sort_order']
+    list_filter = ['country', 'status', 'is_visible']
+    search_fields = ['name', 'slug', 'description']
+
+
+@admin.register(QuestionAssignment)
+class QuestionAssignmentAdmin(admin.ModelAdmin):
+    list_display = ['question', 'subject', 'sort_order', 'created_at']
+    list_filter = ['subject__exam']
+    search_fields = ['question__text', 'subject__name']
 
 
 @admin.register(Subject)

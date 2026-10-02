@@ -3,11 +3,85 @@ from django.conf import settings
 from django.utils import timezone
 
 
+LIBRARY_STATUS_CHOICES = [
+    ('draft', 'Draft'),
+    ('published', 'Published'),
+    ('scheduled', 'Scheduled'),
+    ('archived', 'Archived'),
+]
+
+
+class Country(models.Model):
+    """Top-level grouping for the student exam library."""
+    name = models.CharField(max_length=120)
+    code = models.CharField(max_length=8, unique=True)
+    slug = models.SlugField(max_length=140, unique=True)
+    flag_image = models.ImageField(upload_to='cbt_countries/', blank=True, null=True)
+    sort_order = models.PositiveIntegerField(default=0)
+    status = models.CharField(max_length=20, choices=LIBRARY_STATUS_CHOICES, default='published')
+    is_visible = models.BooleanField(default=True)
+    available_from = models.DateTimeField(blank=True, null=True)
+    available_until = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['sort_order', 'name']
+
+    def __str__(self):
+        return self.name
+
+
+class ExamFolder(models.Model):
+    """A country-scoped folder that may contain folders and exams."""
+    country = models.ForeignKey(Country, on_delete=models.CASCADE, related_name='folders')
+    parent = models.ForeignKey(
+        'self', on_delete=models.SET_NULL, null=True, blank=True, related_name='children'
+    )
+    name = models.CharField(max_length=180)
+    slug = models.SlugField(max_length=200)
+    description = models.TextField(blank=True)
+    icon = models.CharField(max_length=80, blank=True, default='folder')
+    cover_image = models.ImageField(upload_to='cbt_folders/', blank=True, null=True)
+    sort_order = models.PositiveIntegerField(default=0)
+    status = models.CharField(max_length=20, choices=LIBRARY_STATUS_CHOICES, default='published')
+    is_visible = models.BooleanField(default=True)
+    available_from = models.DateTimeField(blank=True, null=True)
+    available_until = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['sort_order', 'name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['country', 'parent', 'slug'],
+                name='unique_folder_slug_per_country_parent',
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.country.name} / {self.name}"
+
+
 class Exam(models.Model):
     """Represents an exam (e.g., JAMB, NECO, WAEC)"""
-    title = models.CharField(max_length=255, unique=True)
+    title = models.CharField(max_length=255)
     slug = models.SlugField(max_length=255, unique=True)
     description = models.TextField(blank=True)
+    folder = models.ForeignKey(
+        ExamFolder, on_delete=models.SET_NULL, null=True, blank=True, related_name='exams'
+    )
+    institution = models.CharField(max_length=255, blank=True)
+    provider = models.CharField(max_length=255, blank=True)
+    exam_type = models.CharField(max_length=120, blank=True)
+    year = models.CharField(max_length=10, blank=True)
+    difficulty = models.CharField(max_length=40, blank=True)
+    sort_order = models.PositiveIntegerField(default=0)
+    status = models.CharField(max_length=20, choices=LIBRARY_STATUS_CHOICES, default='published')
+    is_visible = models.BooleanField(default=True)
+    available_from = models.DateTimeField(blank=True, null=True)
+    available_until = models.DateTimeField(blank=True, null=True)
     time_limit_minutes = models.PositiveIntegerField(default=120, help_text="Time limit in minutes")
     free_trial_attempts = models.PositiveIntegerField(
         default=5,
@@ -25,7 +99,7 @@ class Exam(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ['title']
+        ordering = ['sort_order', 'title']
 
     def __str__(self):
         return self.title
@@ -63,6 +137,20 @@ class Question(models.Model):
 
     def __str__(self):
         return self.text[:50]
+
+
+class QuestionAssignment(models.Model):
+    """Optional secondary placement of a bank question in another subject."""
+    question = models.ForeignKey(Question, on_delete=models.CASCADE, related_name='assignments')
+    subject = models.ForeignKey(Subject, on_delete=models.CASCADE, related_name='question_assignments')
+    sort_order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ['sort_order', '-created_at']
+        constraints = [
+            models.UniqueConstraint(fields=['question', 'subject'], name='unique_question_subject_assignment')
+        ]
 
 
 class Choice(models.Model):
