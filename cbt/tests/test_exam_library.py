@@ -5,7 +5,7 @@ from rest_framework.test import APIClient
 from subadmin.models import SubAdmin
 from users.models import User
 
-from cbt.models import Country, Exam, ExamFolder, Subject
+from cbt.models import Country, Exam, ExamFolder, FolderExam, Subject
 from cbt.serializers import ExamFolderSerializer
 
 
@@ -66,21 +66,10 @@ class ExamLibraryTests(TestCase):
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
-    def test_folder_serializer_rejects_cross_country_parent_and_cycles(self):
-        other_country = Country.objects.create(name='Ghana', code='GH', slug='ghana')
-        other_folder = ExamFolder.objects.create(
-            country=other_country, name='Other', slug='other'
-        )
+    def test_folder_serializer_rejects_cycles(self):
         child = ExamFolder.objects.create(
             country=self.country, parent=self.folder, name='Child', slug='child'
         )
-
-        cross_country = ExamFolderSerializer(
-            child,
-            data={'country': self.country.id, 'parent': other_folder.id},
-            partial=True,
-        )
-        self.assertFalse(cross_country.is_valid())
 
         cycle = ExamFolderSerializer(
             self.folder,
@@ -121,3 +110,34 @@ class ExamLibraryTests(TestCase):
         exam.refresh_from_db()
         self.assertEqual(exam.status, 'archived')
         self.assertFalse(exam.is_visible)
+
+    def test_archiving_folder_does_not_archive_exam(self):
+        exam = Exam.objects.create(
+            title='Folder linked exam', slug='folder-linked-exam', folder=self.folder, status='published'
+        )
+        FolderExam.objects.create(folder=self.folder, exam=exam)
+        self.client.force_authenticate(self.admin)
+
+        response = self.client.post(f'/api/cbt/folders/{self.folder.id}/archive/')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        exam.refresh_from_db()
+        self.assertEqual(exam.status, 'published')
+        self.assertTrue(exam.is_visible)
+
+        student_response = self.client.get('/api/cbt/exams/')
+        self.assertEqual(student_response.status_code, status.HTTP_200_OK)
+        self.assertIn('Folder linked exam', str(student_response.json()))
+
+    def test_deleting_folder_removes_only_container_links(self):
+        exam = Exam.objects.create(
+            title='Keep me', slug='keep-me', folder=self.folder, status='published'
+        )
+        FolderExam.objects.create(folder=self.folder, exam=exam)
+        self.client.force_authenticate(self.admin)
+
+        response = self.client.delete(f'/api/cbt/folders/{self.folder.id}/')
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertTrue(Exam.objects.filter(pk=exam.pk, status='published', is_visible=True).exists())
+        self.assertFalse(FolderExam.objects.filter(exam=exam).exists())

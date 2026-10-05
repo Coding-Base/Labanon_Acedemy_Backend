@@ -9,6 +9,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.conf import settings
 from django.db.models import Q, Count
+from rest_framework.exceptions import ValidationError
 from datetime import timedelta
 import random
 import csv
@@ -16,7 +17,7 @@ import io
 import json
 import re
 
-from .models import Country, ExamFolder, Question, QuestionAssignment, Choice, Exam, ExamAttempt, Subject, StudentAnswer
+from .models import Country, ExamFolder, FolderExam, FolderSubject, Question, QuestionAssignment, Choice, Exam, ExamAttempt, Subject, StudentAnswer
 from .permissions import CanManageExamLibrary
 from .serializers import (
     CountrySerializer, ExamFolderSerializer, QuestionSerializer, ChoiceSerializer, ExamSerializer,
@@ -84,61 +85,81 @@ def student_visible_window_filter():
 
 
 class ExamLibraryView(APIView):
-    """Return the published country/folder/exam tree for the student portal."""
+    """Return the published, tag-filterable folder library for the student portal."""
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
 
     def get(self, request):
         query = request.query_params.get('q', '').strip()
+        country_ids = [value for value in request.query_params.get('country', '').split(',') if value]
+        year = request.query_params.get('year', '').strip()
+        exam_type = request.query_params.get('exam_type', '').strip()
+        institution = request.query_params.get('institution', '').strip()
+        provider = request.query_params.get('provider', '').strip()
+        subject_query = request.query_params.get('subject', '').strip()
+        difficulty = request.query_params.get('difficulty', '').strip()
         visible = student_visible_window_filter()
         countries = Country.objects.filter(visible).order_by('sort_order', 'name')
         folders = list(
             ExamFolder.objects.filter(visible)
-            .select_related('country', 'parent')
+            .select_related('country', 'parent').prefetch_related('country_tags')
             .order_by('sort_order', 'name')
         )
-        exams = list(
-            Exam.objects.filter(visible)
-            .select_related('folder__country')
+        folder_ids = [folder.id for folder in folders]
+        exam_links = list(
+            FolderExam.objects.filter(folder_id__in=folder_ids, exam__in=Exam.objects.filter(visible))
+            .select_related('exam').prefetch_related('exam__subjects__questions')
+            .annotate(attempt_count=Count('exam__attempts'))
+            .order_by('sort_order', 'created_at')
+        )
+        legacy_folder_exams = list(
+            Exam.objects.filter(visible, folder_id__in=folder_ids)
             .prefetch_related('subjects__questions')
             .annotate(attempt_count=Count('attempts'))
             .order_by('sort_order', 'title')
         )
+        subject_links = list(
+            FolderSubject.objects.filter(folder_id__in=folder_ids, subject__exam__in=Exam.objects.filter(visible))
+            .select_related('subject__exam').prefetch_related('subject__questions')
+            .order_by('sort_order', 'created_at')
+        )
 
-        if query:
-            match = query.lower()
-            matching_exam_ids = {
-                exam.id for exam in exams
-                if match in ' '.join([
-                    exam.title, exam.description, exam.institution,
-                    exam.provider, exam.exam_type, exam.year, exam.difficulty,
-                    exam.folder.name if exam.folder else '',
-                    exam.folder.country.name if exam.folder and exam.folder.country else '',
-                    ' '.join(subject.name for subject in exam.subjects.all()),
-                ]).lower()
-            }
-            matching_folder_ids = {
-                folder.id for folder in folders
-                if match in f'{folder.name} {folder.description}'.lower()
-            }
-            matching_country_ids = {
-                country.id for country in countries
-                if match in f'{country.name} {country.code}'.lower()
-            }
-            for country in countries:
-                if country.id in matching_country_ids:
-                    matching_folder_ids.update(folder.id for folder in folders if folder.country_id == country.id)
-                    matching_exam_ids.update(exam.id for exam in exams if exam.folder and exam.folder.country_id == country.id)
+        if country_ids:
+            selected_country_ids = {int(value) for value in country_ids if value.isdigit()}
         else:
-            matching_exam_ids = {exam.id for exam in exams}
-            matching_folder_ids = {folder.id for folder in folders}
-            matching_country_ids = {country.id for country in countries}
+            selected_country_ids = set()
 
-        exams_by_folder = {}
-        for exam in exams:
-            if exam.id in matching_exam_ids and exam.folder_id:
-                exams_by_folder.setdefault(exam.folder_id, []).append(
-                    ExamSerializer(exam, context={'request': request}).data
-                )
+        def matches_exam(exam, extra_subjects=()):
+            values = [exam.title, exam.description, exam.institution, exam.provider, exam.exam_type, exam.year, exam.difficulty]
+            values.extend(subject.name for subject in exam.subjects.all())
+            values.extend(subject.name for subject in extra_subjects)
+            haystack = ' '.join(str(value or '') for value in values).lower()
+            if query and query.lower() not in haystack:
+                return False
+            if year and exam.year != year:
+                return False
+            if exam_type and exam.exam_type.lower() != exam_type.lower():
+                return False
+            if institution and institution.lower() not in exam.institution.lower():
+                return False
+            if provider and provider.lower() not in exam.provider.lower():
+                return False
+            if difficulty and exam.difficulty.lower() != difficulty.lower():
+                return False
+            if subject_query and not any(subject_query.lower() in subject.name.lower() for subject in exam.subjects.all()):
+                return False
+            return True
+
+        full_exams_by_folder = {}
+        subject_links_by_folder = {}
+        for link in exam_links:
+            if matches_exam(link.exam):
+                full_exams_by_folder.setdefault(link.folder_id, {})[link.exam_id] = link.exam
+        for exam in legacy_folder_exams:
+            if matches_exam(exam):
+                full_exams_by_folder.setdefault(exam.folder_id, {})[exam.id] = exam
+        for link in subject_links:
+            if matches_exam(link.subject.exam, [link.subject]):
+                subject_links_by_folder.setdefault(link.folder_id, []).append(link)
 
         children_by_parent = {}
         for folder in folders:
@@ -150,32 +171,42 @@ class ExamLibraryView(APIView):
                 child_data = build_folder(child)
                 if child_data:
                     children.append(child_data)
-            folder_exams = exams_by_folder.get(folder.id, [])
-            folder_matches = folder.id in matching_folder_ids
-            if not (folder_matches or folder_exams or children):
+            folder_tags = list(folder.country_tags.all())
+            if not folder_tags and folder.country_id:
+                folder_tags = [folder.country]
+            tag_matches = not selected_country_ids or bool({tag.id for tag in folder_tags} & selected_country_ids)
+            folder_text = ' '.join([folder.name, folder.description, *[tag.name for tag in folder_tags]]).lower()
+            folder_matches = bool(query and query.lower() in folder_text)
+            full_exams = list(full_exams_by_folder.get(folder.id, {}).values()) if tag_matches else []
+            selected_links = subject_links_by_folder.get(folder.id, []) if tag_matches else []
+            if not (folder_matches and tag_matches or full_exams or selected_links or children):
                 return None
-            return {
+            full_exam_ids = {exam.id for exam in full_exams}
+            subject_entries = [
+                {
+                    'id': link.id,
+                    'subject': SubjectSerializer(link.subject, context={'request': request}).data,
+                    'exam': ExamSerializer(link.subject.exam, context={'request': request}).data,
+                    'sort_order': link.sort_order,
+                }
+                for link in selected_links if link.subject.exam_id not in full_exam_ids
+            ]
+            data = {
                 **ExamFolderSerializer(folder, context={'request': request}).data,
                 'children': children,
-                'exams': folder_exams,
+                'exams': [ExamSerializer(exam, context={'request': request}).data for exam in full_exams],
+                'subject_entries': subject_entries,
             }
+            return data
 
-        result = []
-        for country in countries:
-            country_folders = [
-                build_folder(folder)
-                for folder in children_by_parent.get(None, [])
-                if folder.country_id == country.id
-            ]
-            country_folders = [folder for folder in country_folders if folder]
-            if country.id not in matching_country_ids and not country_folders:
-                continue
-            result.append({
-                **CountrySerializer(country, context={'request': request}).data,
-                'folders': country_folders,
-            })
-
-        return Response({'results': result, 'query': query})
+        result = [build_folder(folder) for folder in children_by_parent.get(None, [])]
+        result = [folder for folder in result if folder]
+        return Response({
+            'results': result,
+            'folders': result,
+            'countries': CountrySerializer(countries, many=True, context={'request': request}).data,
+            'query': query,
+        })
 
 
 class CountryViewSet(viewsets.ModelViewSet):
@@ -195,7 +226,7 @@ class CountryViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_destroy(self, instance):
-        if instance.folders.exists():
+        if instance.tagged_folders.exists() or instance.legacy_folders.exists():
             instance.status = 'archived'
             instance.is_visible = False
             instance.save(update_fields=['status', 'is_visible', 'updated_at'])
@@ -214,13 +245,13 @@ class ExamFolderViewSet(viewsets.ModelViewSet):
         return [CanManageExamLibrary()]
 
     def get_queryset(self):
-        queryset = super().get_queryset().order_by('country_id', 'sort_order', 'name')
+        queryset = super().get_queryset().prefetch_related('country_tags').order_by('sort_order', 'name')
         if self.request.method in permissions.SAFE_METHODS and not CanManageExamLibrary().has_permission(self.request, self):
             return queryset.filter(student_visible_window_filter())
         country_id = self.request.query_params.get('country')
         parent_id = self.request.query_params.get('parent')
         if country_id:
-            queryset = queryset.filter(country_id=country_id)
+            queryset = queryset.filter(Q(country_tags__id=country_id) | Q(country_id=country_id)).distinct()
         if parent_id == 'root':
             queryset = queryset.filter(parent__isnull=True)
         elif parent_id:
@@ -231,16 +262,107 @@ class ExamFolderViewSet(viewsets.ModelViewSet):
     def contents(self, request, pk=None):
         folder = self.get_object()
         children = self.get_queryset().filter(parent=folder).order_by('sort_order', 'name')
-        exams = Exam.objects.filter(folder=folder).select_related('folder__country').prefetch_related('subjects__questions').annotate(
-            attempt_count=Count('attempts')
-        ).order_by('sort_order', 'title')
+        exam_links = FolderExam.objects.filter(folder=folder).select_related('exam').prefetch_related('exam__subjects__questions').order_by('sort_order', 'created_at')
+        subject_links = FolderSubject.objects.filter(folder=folder).select_related('subject__exam').prefetch_related('subject__questions').order_by('sort_order', 'created_at')
         if not CanManageExamLibrary().has_permission(request, self):
-            exams = exams.filter(student_visible_window_filter())
+            exam_links = exam_links.filter(exam__in=Exam.objects.filter(student_visible_window_filter()))
+            subject_links = subject_links.filter(subject__exam__in=Exam.objects.filter(student_visible_window_filter()))
         return Response({
             'folder': ExamFolderSerializer(folder, context={'request': request}).data,
             'children': ExamFolderSerializer(children, many=True, context={'request': request}).data,
-            'exams': ExamSerializer(exams, many=True, context={'request': request}).data,
+            'exams': ExamSerializer([link.exam for link in exam_links], many=True, context={'request': request}).data,
+            'exam_links': [{'id': link.id, 'exam': ExamSerializer(link.exam, context={'request': request}).data, 'sort_order': link.sort_order} for link in exam_links],
+            'subject_links': [{'id': link.id, 'subject': SubjectSerializer(link.subject, context={'request': request}).data, 'exam': ExamSerializer(link.subject.exam, context={'request': request}).data, 'sort_order': link.sort_order} for link in subject_links],
         })
+
+    @action(detail=True, methods=['get'], permission_classes=[CanManageExamLibrary])
+    def available_content(self, request, pk=None):
+        """Browse existing exams and their subjects before linking them to a folder."""
+        self.get_object()
+        query = request.query_params.get('q', '').strip()
+        exams = Exam.objects.prefetch_related('subjects__questions').order_by('title')
+        if query:
+            exams = exams.filter(
+                Q(title__icontains=query) | Q(description__icontains=query) |
+                Q(institution__icontains=query) | Q(provider__icontains=query) |
+                Q(subjects__name__icontains=query)
+            ).distinct()
+        return Response(ExamSerializer(exams, many=True, context={'request': request}).data)
+
+    @action(detail=True, methods=['post'], permission_classes=[CanManageExamLibrary])
+    def attach_exam(self, request, pk=None):
+        folder = self.get_object()
+        exam = get_object_or_404(Exam, pk=request.data.get('exam_id'))
+        link, created = FolderExam.objects.get_or_create(
+            folder=folder,
+            exam=exam,
+            defaults={'sort_order': folder.exam_links.count()},
+        )
+        return Response({'created': created, 'link_id': link.id, 'exam': ExamSerializer(exam, context={'request': request}).data}, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], permission_classes=[CanManageExamLibrary])
+    def attach_subject(self, request, pk=None):
+        folder = self.get_object()
+        subject = get_object_or_404(Subject, pk=request.data.get('subject_id'))
+        link, created = FolderSubject.objects.get_or_create(
+            folder=folder,
+            subject=subject,
+            defaults={'sort_order': folder.subject_links.count()},
+        )
+        return Response({'created': created, 'link_id': link.id, 'subject': SubjectSerializer(subject, context={'request': request}).data}, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], permission_classes=[CanManageExamLibrary])
+    def detach_exam(self, request, pk=None):
+        folder = self.get_object()
+        deleted, _ = FolderExam.objects.filter(folder=folder, exam_id=request.data.get('exam_id')).delete()
+        if not deleted:
+            return Response({'detail': 'This exam is not linked to the folder.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=['post'], permission_classes=[CanManageExamLibrary])
+    def detach_subject(self, request, pk=None):
+        folder = self.get_object()
+        deleted, _ = FolderSubject.objects.filter(folder=folder, subject_id=request.data.get('subject_id')).delete()
+        if not deleted:
+            return Response({'detail': 'This subject is not linked to the folder.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=['post'], permission_classes=[CanManageExamLibrary])
+    def publish(self, request, pk=None):
+        folder = self.get_object()
+        folder.status = 'published'
+        folder.is_visible = True
+        folder.status_before_archive = ''
+        folder.save(update_fields=['status', 'is_visible', 'status_before_archive', 'updated_at'])
+        return Response(self.get_serializer(folder).data)
+
+    @action(detail=True, methods=['post'], permission_classes=[CanManageExamLibrary])
+    def unpublish(self, request, pk=None):
+        folder = self.get_object()
+        folder.status = 'draft'
+        folder.is_visible = False
+        folder.save(update_fields=['status', 'is_visible', 'updated_at'])
+        return Response(self.get_serializer(folder).data)
+
+    @action(detail=True, methods=['post'], permission_classes=[CanManageExamLibrary])
+    def archive(self, request, pk=None):
+        folder = self.get_object()
+        if folder.status != 'archived':
+            folder.status_before_archive = folder.status
+        folder.status = 'archived'
+        folder.is_visible = False
+        folder.save(update_fields=['status', 'is_visible', 'status_before_archive', 'updated_at'])
+        return Response(self.get_serializer(folder).data)
+
+    @action(detail=True, methods=['post'], permission_classes=[CanManageExamLibrary])
+    def unarchive(self, request, pk=None):
+        folder = self.get_object()
+        restored_status = folder.status_before_archive if folder.status_before_archive in {'draft', 'published', 'scheduled'} else 'draft'
+        folder.status = restored_status
+        folder.is_visible = restored_status in {'published', 'scheduled'}
+        folder.status_before_archive = ''
+        folder.save(update_fields=['status', 'is_visible', 'status_before_archive', 'updated_at'])
+        return Response(self.get_serializer(folder).data)
 
     @action(detail=False, methods=['post'])
     def reorder(self, request):
@@ -253,8 +375,8 @@ class ExamFolderViewSet(viewsets.ModelViewSet):
         folders = list(self.get_queryset().filter(id__in=item_ids))
         if len(folders) != len(item_ids):
             return Response({'detail': 'One or more folders do not exist.'}, status=status.HTTP_400_BAD_REQUEST)
-        sibling_keys = {(folder.country_id, folder.parent_id) for folder in folders}
-        if len(sibling_keys) > 1:
+        parent_ids = {folder.parent_id for folder in folders}
+        if len(parent_ids) > 1:
             return Response({'detail': 'Folders can only be reordered with their siblings.'}, status=status.HTTP_400_BAD_REQUEST)
         by_id = {folder.id: folder for folder in folders}
         for item in items:
@@ -266,12 +388,10 @@ class ExamFolderViewSet(viewsets.ModelViewSet):
         return Response(ExamFolderSerializer(folders, many=True, context={'request': request}).data)
 
     def perform_destroy(self, instance):
-        if instance.children.exists() or instance.exams.exists():
-            instance.status = 'archived'
-            instance.is_visible = False
-            instance.save(update_fields=['status', 'is_visible', 'updated_at'])
-        else:
-            instance.delete()
+        # Folders are discovery containers only. Deleting a folder removes the
+        # container and its FolderExam/FolderSubject links through cascade, but
+        # must never delete or archive the underlying exams or subjects.
+        instance.delete()
 
 
 class ExamViewSet(viewsets.ModelViewSet):

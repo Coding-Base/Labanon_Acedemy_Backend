@@ -12,7 +12,7 @@ LIBRARY_STATUS_CHOICES = [
 
 
 class Country(models.Model):
-    """Top-level grouping for the student exam library."""
+    """A reusable discovery tag for folders in the student exam library."""
     name = models.CharField(max_length=120)
     code = models.CharField(max_length=8, unique=True)
     slug = models.SlugField(max_length=140, unique=True)
@@ -33,8 +33,13 @@ class Country(models.Model):
 
 
 class ExamFolder(models.Model):
-    """A country-scoped folder that may contain folders and exams."""
-    country = models.ForeignKey(Country, on_delete=models.CASCADE, related_name='folders')
+    """A reusable library container for linked exams, subjects, and subfolders."""
+    # Kept during the migration window so existing links and integrations remain valid.
+    # New code uses country_tags, not this legacy single-country field.
+    country = models.ForeignKey(
+        Country, on_delete=models.SET_NULL, related_name='legacy_folders', null=True, blank=True
+    )
+    country_tags = models.ManyToManyField(Country, related_name='tagged_folders', blank=True)
     parent = models.ForeignKey(
         'self', on_delete=models.SET_NULL, null=True, blank=True, related_name='children'
     )
@@ -45,6 +50,7 @@ class ExamFolder(models.Model):
     cover_image = models.ImageField(upload_to='cbt_folders/', blank=True, null=True)
     sort_order = models.PositiveIntegerField(default=0)
     status = models.CharField(max_length=20, choices=LIBRARY_STATUS_CHOICES, default='published')
+    status_before_archive = models.CharField(max_length=20, choices=LIBRARY_STATUS_CHOICES, blank=True)
     is_visible = models.BooleanField(default=True)
     available_from = models.DateTimeField(blank=True, null=True)
     available_until = models.DateTimeField(blank=True, null=True)
@@ -54,14 +60,11 @@ class ExamFolder(models.Model):
     class Meta:
         ordering = ['sort_order', 'name']
         constraints = [
-            models.UniqueConstraint(
-                fields=['country', 'parent', 'slug'],
-                name='unique_folder_slug_per_country_parent',
-            )
+            models.UniqueConstraint(fields=['parent', 'slug'], name='unique_folder_slug_per_parent')
         ]
 
     def __str__(self):
-        return f"{self.country.name} / {self.name}"
+        return self.name
 
 
 class Exam(models.Model):
@@ -119,6 +122,34 @@ class Subject(models.Model):
 
     def __str__(self):
         return f"{self.exam.title} - {self.name}"
+
+
+class FolderExam(models.Model):
+    """A discovery-only placement of an exam in a library folder."""
+    folder = models.ForeignKey(ExamFolder, on_delete=models.CASCADE, related_name='exam_links')
+    exam = models.ForeignKey(Exam, on_delete=models.CASCADE, related_name='folder_links')
+    sort_order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ['sort_order', 'created_at']
+        constraints = [
+            models.UniqueConstraint(fields=['folder', 'exam'], name='unique_folder_exam_link')
+        ]
+
+
+class FolderSubject(models.Model):
+    """A discovery-only placement of one subject in a library folder."""
+    folder = models.ForeignKey(ExamFolder, on_delete=models.CASCADE, related_name='subject_links')
+    subject = models.ForeignKey(Subject, on_delete=models.CASCADE, related_name='folder_links')
+    sort_order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ['sort_order', 'created_at']
+        constraints = [
+            models.UniqueConstraint(fields=['folder', 'subject'], name='unique_folder_subject_link')
+        ]
 
 
 class Question(models.Model):

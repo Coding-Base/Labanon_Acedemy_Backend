@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Country, ExamFolder, Question, Choice, Exam, ExamAttempt, Subject, StudentAnswer
+from .models import Country, ExamFolder, FolderExam, FolderSubject, Question, Choice, Exam, ExamAttempt, Subject, StudentAnswer
 from django.db.models import Q
 from django.utils.text import slugify
 from .math_utils import format_math_question, format_math_choices
@@ -29,35 +29,37 @@ class CountrySerializer(serializers.ModelSerializer):
         read_only_fields = ['created_at', 'updated_at', 'folder_count', 'exam_count']
 
     def get_folder_count(self, obj):
-        return obj.folders.count()
+        return obj.tagged_folders.count()
 
     def get_exam_count(self, obj):
-        return Exam.objects.filter(folder__country=obj).count()
+        return Exam.objects.filter(folder_links__folder__country_tags=obj).distinct().count()
 
 
 class ExamFolderSerializer(serializers.ModelSerializer):
     child_count = serializers.SerializerMethodField()
     exam_count = serializers.SerializerMethodField()
-    country_name = serializers.CharField(source='country.name', read_only=True)
+    subject_count = serializers.SerializerMethodField()
+    country_tags = serializers.PrimaryKeyRelatedField(
+        queryset=Country.objects.all(), many=True, required=False
+    )
+    country_tag_details = CountrySerializer(source='country_tags', many=True, read_only=True)
+    country_name = serializers.CharField(source='country.name', read_only=True, allow_null=True)
     parent_name = serializers.CharField(source='parent.name', read_only=True)
 
     class Meta:
         model = ExamFolder
         fields = [
-            'id', 'country', 'country_name', 'parent', 'parent_name', 'name', 'slug',
+            'id', 'country', 'country_name', 'country_tags', 'country_tag_details', 'parent', 'parent_name', 'name', 'slug',
             'description', 'icon', 'cover_image', 'sort_order', 'status', 'is_visible',
-            'available_from', 'available_until', 'child_count', 'exam_count',
+            'available_from', 'available_until', 'status_before_archive', 'child_count', 'exam_count', 'subject_count',
             'created_at', 'updated_at'
         ]
-        read_only_fields = ['created_at', 'updated_at', 'child_count', 'exam_count']
+        read_only_fields = ['created_at', 'updated_at', 'status_before_archive', 'child_count', 'exam_count', 'subject_count']
 
     def validate(self, attrs):
         instance = self.instance
-        country = attrs.get('country', instance.country if instance else None)
         parent = attrs.get('parent', instance.parent if instance else None)
 
-        if parent and country and parent.country_id != country.id:
-            raise serializers.ValidationError({'parent': 'The parent folder must belong to the same country.'})
         if instance and parent and parent.pk == instance.pk:
             raise serializers.ValidationError({'parent': 'A folder cannot be its own parent.'})
 
@@ -72,7 +74,10 @@ class ExamFolderSerializer(serializers.ModelSerializer):
         return obj.children.count()
 
     def get_exam_count(self, obj):
-        return obj.exams.count()
+        return obj.exam_links.count()
+
+    def get_subject_count(self, obj):
+        return obj.subject_links.count()
 
 
 class ChoiceSerializer(serializers.ModelSerializer):
