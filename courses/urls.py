@@ -38,6 +38,14 @@ from .referral_views import (
     AdminReferralEventsView, AdminReferralSettingsView, ApplyReferralCodeView,
     MyReferralView, RedeemReferralPointsView
 )
+from .exam_referral_views import (
+    ExamReferralCampaignsListView, StudentExamReferralDashboardView,
+    BankAccountView, ExamReferralPromoConfigView, ReferralRegistrationView,
+    AdminExamReferralCampaignView, AdminExamReferralCampaignDetailView,
+    AdminExamReferralRewardsView, AdminExamReferralDashboardView,
+    AdminConfirmPayoutView, AdminPayoutHistoryView,
+    AdminExamReferralPromoConfigView,
+)
 from .subscription_views import (
     AdminActivationsListView, AdminResetActivationsView, AdminResetLogsView,
     AdminProPlanView, AdminProPlanDetailView, AdminSubscribersView, AdminGrantProView,
@@ -92,6 +100,23 @@ urlpatterns = [
     path('referrals/admin/settings/', AdminReferralSettingsView.as_view(), name='referrals-admin-settings'),
     path('referrals/admin/events/', AdminReferralEventsView.as_view(), name='referrals-admin-events'),
 
+    # ==================== EXAM REFERRAL CASH REWARD SYSTEM ====================
+
+    # Student endpoints
+    path('exam-referrals/campaigns/', ExamReferralCampaignsListView.as_view(), name='exam-referral-campaigns'),
+    path('exam-referrals/my-rewards/', StudentExamReferralDashboardView.as_view(), name='exam-referral-my-rewards'),
+    path('exam-referrals/bank-account/', BankAccountView.as_view(), name='exam-referral-bank-account'),
+    path('exam-referrals/promo-config/', ExamReferralPromoConfigView.as_view(), name='exam-referral-promo-config'),
+    path('exam-referrals/register/', ReferralRegistrationView.as_view(), name='exam-referral-register'),
+
+    # Admin endpoints
+    path('exam-referrals/admin/campaigns/', AdminExamReferralCampaignView.as_view(), name='exam-referral-admin-campaigns'),
+    path('exam-referrals/admin/campaigns/<int:campaign_id>/', AdminExamReferralCampaignDetailView.as_view(), name='exam-referral-admin-campaign-detail'),
+    path('exam-referrals/admin/rewards/', AdminExamReferralRewardsView.as_view(), name='exam-referral-admin-rewards'),
+    path('exam-referrals/admin/dashboard/', AdminExamReferralDashboardView.as_view(), name='exam-referral-admin-dashboard'),
+    path('exam-referrals/admin/confirm-payout/', AdminConfirmPayoutView.as_view(), name='exam-referral-admin-confirm-payout'),
+    path('exam-referrals/admin/payout-history/', AdminPayoutHistoryView.as_view(), name='exam-referral-admin-payout-history'),
+    path('exam-referrals/admin/promo-config/', AdminExamReferralPromoConfigView.as_view(), name='exam-referral-admin-promo-config'),
     # Flutterwave Payment endpoints
     path('payments/flutterwave/initiate/', InitiateFlutterwavePaymentView.as_view(), name='initiate-flutterwave-payment'),
     path('payments/flutterwave/verify/<str:reference>/', VerifyFlutterwavePaymentView.as_view(), name='verify-flutterwave-payment'),

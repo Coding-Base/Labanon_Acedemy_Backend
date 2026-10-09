@@ -1163,6 +1163,280 @@ class LegalDocument(models.Model):
         return f"{self.title} (v{self.version})"
 
 
+# ==================== EXAM REFERRAL CASH REWARD SYSTEM ====================
+
+
+class BankAccount(models.Model):
+    """User bank account details for manual referral cash payouts."""
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+        related_name='bank_account'
+    )
+    bank_name = models.CharField(max_length=255)
+    bank_code = models.CharField(
+        max_length=20, blank=True,
+        help_text="Bank code for verification (e.g. Paystack bank code)"
+    )
+    account_number = models.CharField(max_length=20)
+    account_name = models.CharField(max_length=255)
+    is_verified = models.BooleanField(
+        default=False,
+        help_text="Admin-verified or auto-verified via bank API"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Bank Account"
+        verbose_name_plural = "Bank Accounts"
+
+    def __str__(self):
+        return f"{self.user.username} - {self.bank_name} ***{self.account_number[-4:]}"
+
+
+class ExamReferralCampaign(models.Model):
+    """Admin-created referral campaign for a specific CBT exam with cash reward."""
+    exam = models.ForeignKey(
+        'cbt.Exam', on_delete=models.CASCADE,
+        related_name='referral_campaigns'
+    )
+    cash_reward = models.DecimalField(
+        max_digits=10, decimal_places=2,
+        help_text="Cash amount paid to referrer when referee unlocks this exam"
+    )
+    currency = models.CharField(max_length=8, default='NGN')
+    is_active = models.BooleanField(default=True)
+
+    # Payout schedule
+    payout_date = models.DateField(
+        null=True, blank=True,
+        help_text="Scheduled date for admin to process payouts (optional)"
+    )
+    payout_day = models.CharField(
+        max_length=50, blank=True, default='Every Friday',
+        help_text="Weekly or recurring payout day across the platform, e.g. 'Every Friday', 'Friday'"
+    )
+    payout_note = models.TextField(
+        blank=True,
+        help_text="Note displayed to students about payout schedule"
+    )
+
+    # Campaign validity window
+    start_date = models.DateTimeField(default=timezone.now)
+    end_date = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Campaign expires after this date. Null = no expiry"
+    )
+
+    # Caps
+    max_rewards_per_referrer = models.PositiveIntegerField(
+        default=0, help_text="Max rewards one referrer can earn for this campaign. 0 = unlimited"
+    )
+    max_total_rewards = models.PositiveIntegerField(
+        default=0, help_text="Max total rewards across all referrers. 0 = unlimited"
+    )
+
+    # Aggregate tracking (denormalised for fast dashboard reads)
+    total_rewards_issued = models.PositiveIntegerField(default=0)
+    total_amount_accrued = models.DecimalField(
+        max_digits=12, decimal_places=2, default=Decimal('0.00')
+    )
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, related_name='created_exam_campaigns'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['exam'],
+                condition=models.Q(is_active=True),
+                name='unique_active_campaign_per_exam'
+            )
+        ]
+
+    def __str__(self):
+        return f"Referral Campaign: {self.exam.title} - {self.currency} {self.cash_reward}"
+
+    def is_valid(self):
+        """Check if campaign is currently active and within date range."""
+        now = timezone.now()
+        if not self.is_active:
+            return False
+        if self.end_date and now > self.end_date:
+            return False
+        if now < self.start_date:
+            return False
+        if self.max_total_rewards and self.total_rewards_issued >= self.max_total_rewards:
+            return False
+        return True
+
+
+class ExamReferralReward(models.Model):
+    """Individual cash reward earned by a referrer for a referee's exam unlock."""
+    STATUS_PENDING = 'pending'        # Referee signed up but hasn't unlocked
+    STATUS_EARNED = 'earned'          # Referee unlocked exam, cash is due
+    STATUS_PAID = 'paid'              # Admin confirmed manual payment
+    STATUS_CANCELLED = 'cancelled'    # Cancelled (e.g. refund, fraud)
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending (Awaiting Unlock)'),
+        (STATUS_EARNED, 'Earned (Awaiting Payment)'),
+        (STATUS_PAID, 'Paid'),
+        (STATUS_CANCELLED, 'Cancelled'),
+    ]
+
+    campaign = models.ForeignKey(
+        ExamReferralCampaign, on_delete=models.CASCADE,
+        related_name='rewards'
+    )
+    referrer = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+        related_name='exam_referral_rewards'
+    )
+    referee = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+        related_name='exam_referral_as_referee'
+    )
+
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    currency = models.CharField(max_length=8, default='NGN')
+    status = models.CharField(
+        max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING
+    )
+
+    # Link to the activation unlock that triggered the reward
+    activation_unlock = models.ForeignKey(
+        ActivationUnlock, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='exam_referral_rewards'
+    )
+
+    earned_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="When the referee unlocked the exam"
+    )
+    paid_at = models.DateTimeField(null=True, blank=True)
+    paid_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='confirmed_exam_payouts'
+    )
+
+    # Payout reference
+    payout = models.ForeignKey(
+        'ExamReferralPayout', on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='rewards'
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['campaign', 'referrer', 'referee'],
+                name='unique_exam_referral_reward'
+            )
+        ]
+        indexes = [
+            models.Index(fields=['referrer', 'status']),
+            models.Index(fields=['referee', 'campaign']),
+            models.Index(fields=['status', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.referrer.username} earned {self.currency} {self.amount} from {self.referee.username}"
+
+
+class ExamReferralPayout(models.Model):
+    """Admin-confirmed manual payout to a referrer."""
+    STATUS_PENDING = 'pending'
+    STATUS_CONFIRMED = 'confirmed'
+    STATUS_FAILED = 'failed'
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_CONFIRMED, 'Confirmed'),
+        (STATUS_FAILED, 'Failed'),
+    ]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+        related_name='exam_referral_payouts'
+    )
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    currency = models.CharField(max_length=8, default='NGN')
+    status = models.CharField(
+        max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING
+    )
+
+    # Admin who confirmed
+    confirmed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='confirmed_referral_payouts'
+    )
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+
+    # Reference for the bank transfer
+    transaction_reference = models.CharField(
+        max_length=255, blank=True,
+        help_text="Bank transfer reference or receipt number"
+    )
+    admin_note = models.TextField(blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+            models.Index(fields=['status', '-created_at']),
+        ]
+
+    def __str__(self):
+        return f"Payout {self.currency} {self.amount} to {self.user.username} [{self.status}]"
+
+
+class ExamReferralPromoConfig(models.Model):
+    """Singleton: admin-configurable promotional display settings for exam referral system."""
+    show_homepage_banner = models.BooleanField(default=True)
+    show_dashboard_banner = models.BooleanField(default=True)
+    show_popup_modal = models.BooleanField(default=True)
+    popup_frequency_hours = models.PositiveIntegerField(
+        default=24,
+        help_text="Minimum hours between popup appearances for same user"
+    )
+    banner_title = models.CharField(
+        max_length=255, default="Earn Cash by Referring Friends!"
+    )
+    banner_description = models.TextField(
+        default="Share your referral link for any exam with a cash prize. "
+                "When your friend unlocks the exam, you earn real money!"
+    )
+    banner_cta_text = models.CharField(max_length=100, default="Start Earning Now")
+    is_active = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Exam Referral Promo Config"
+        verbose_name_plural = "Exam Referral Promo Config"
+
+    def __str__(self):
+        return f"Exam Referral Promo ({'active' if self.is_active else 'inactive'})"
+
+    @classmethod
+    def get_solo(cls):
+        obj = cls.objects.first()
+        if not obj:
+            obj = cls.objects.create()
+        return obj
+
+
 # Import and expose subscription models
 from .subscription_models import ProPlan, UserSubscription, SubscriptionResetLog
 

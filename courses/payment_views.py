@@ -1057,6 +1057,12 @@ class VerifyPaymentView(APIView):
                                                 logger.info(f"Added {len(subjects)} subjects to unlock {unlock.id}")
                                             except Exception as e:
                                                 logger.warning(f"Failed to set selected subjects for unlock {unlock.id}: {str(e)}")
+                                        # --- Exam Referral Cash Reward Hook ---
+                                        try:
+                                            from .exam_referral_views import check_exam_referral_reward
+                                            check_exam_referral_reward(payment.user, exam_identifier, unlock)
+                                        except Exception as ref_err:
+                                            logger.warning(f"Exam referral reward check failed for user {payment.user.id}: {ref_err}")
                                     # Mark account unlocked if activation_type == 'account'
                                     try:
                                         activation_type = activation.get('activation_type') if activation else None
@@ -2084,6 +2090,12 @@ class VerifyFlutterwavePaymentView(APIView):
                                                 logger.info(f"Added {len(subjects)} subjects to unlock {unlock.id}")
                                             except Exception as e:
                                                 logger.warning(f"Failed to set selected subjects for unlock {unlock.id}: {str(e)}")
+                                        # --- Exam Referral Cash Reward Hook ---
+                                        try:
+                                            from .exam_referral_views import check_exam_referral_reward
+                                            check_exam_referral_reward(payment.user, exam_identifier, unlock)
+                                        except Exception as ref_err:
+                                            logger.warning(f"Exam referral reward check failed for user {payment.user.id}: {ref_err}")
                                 except Exception as e:
                                     logger.error(f"Failed to create activation unlock (flutterwave verify): {str(e)}")
                                 # Mark account unlocked if activation_type == 'account'
