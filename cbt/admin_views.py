@@ -65,10 +65,12 @@ def bulk_upload_questions_admin(request):
                             error_count += 1
                             continue
                         
-                        # Create question
+                        # Create question with optional image
+                        q_image = str(q_data.get('image') or q_data.get('image_url') or q_data.get('question_image') or '').strip()
                         question = Question.objects.create(
                             subject=subject,
                             text=question_text,
+                            image=q_image if q_image else None,
                             creator=request.user
                         )
                         

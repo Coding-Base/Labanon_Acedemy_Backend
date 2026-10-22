@@ -105,6 +105,12 @@ class QuestionSerializer(serializers.ModelSerializer):
         """Format question text with LaTeX when serializing"""
         data = super().to_representation(instance)
         data['text'] = format_math_text(data['text'])
+        if instance.image:
+            img_str = str(instance.image).strip()
+            if img_str.startswith(('http://', 'https://')):
+                data['image'] = img_str
+            elif img_str.startswith('//'):
+                data['image'] = f"https:{img_str}"
         return data
 
     def create(self, validated_data):
@@ -224,6 +230,12 @@ class StudentAnswerSerializer(serializers.ModelSerializer):
         """Format question and answer text with LaTeX when serializing"""
         data = super().to_representation(instance)
         data['question_text'] = format_math_text(data['question_text'])
+        if instance.question and instance.question.image:
+            img_str = str(instance.question.image).strip()
+            if img_str.startswith(('http://', 'https://')):
+                data['question_image'] = img_str
+            elif img_str.startswith('//'):
+                data['question_image'] = f"https:{img_str}"
         return data
 
 

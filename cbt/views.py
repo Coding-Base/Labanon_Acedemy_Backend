@@ -890,11 +890,18 @@ class BulkQuestionUploadView(APIView):
                         cleaned_row.get('subject_name') or ''
                     )
 
+                    q_image = (
+                        cleaned_row.get('image_url') or 
+                        cleaned_row.get('image') or 
+                        cleaned_row.get('question_image') or 
+                        cleaned_row.get('img') or ''
+                    )
                     questions_list.append({
                         'question_text': q_text,
                         'options': options,
                         'correct_answer': correct_ans,
                         'explanation': cleaned_row.get('explanation', '') or cleaned_row.get('solution', ''),
+                        'image': q_image,
                         'id': cleaned_row.get('id', ''),
                         'year': q_year,
                         'subject': q_subject
@@ -919,11 +926,18 @@ class BulkQuestionUploadView(APIView):
                             elif k in ['a', 'b', 'c', 'd', 'e']:
                                 options[k.upper()] = str(v).strip()
 
+                        q_image = str(
+                            row_dict.get('image_url') or 
+                            row_dict.get('image') or 
+                            row_dict.get('question_image') or 
+                            row_dict.get('img') or ''
+                        ).strip()
                         questions_list.append({
                             'question_text': str(row_dict.get('question_text') or row_dict.get('question') or ''),
                             'options': options,
                             'correct_answer': str(row_dict.get('correct_answer') or row_dict.get('answer') or ''),
                             'explanation': str(row_dict.get('explanation') or ''),
+                            'image': q_image,
                             'id': str(row_dict.get('id') or ''),
                             'year': str(row_dict.get('year') or ''),
                             'subject': str(row_dict.get('subject') or '')
@@ -1023,10 +1037,18 @@ class BulkQuestionUploadView(APIView):
                     except Subject.DoesNotExist:
                         target_subject = subject
 
-                # Create question with determined year and subject
+                # Extract optional image URL or path
+                q_image_val = str(q_data.get('image') or q_data.get('image_url') or q_data.get('question_image') or '').strip()
+                if q_image_val and not (q_image_val.startswith(('http://', 'https://', '//')) or q_image_val.startswith('cbt_questions/')):
+                    # Clean/ignore invalid string values
+                    if not q_image_val.endswith(('.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg')):
+                        q_image_val = ''
+
+                # Create question with determined year, subject, and optional image
                 question = Question.objects.create(
                     subject=target_subject,
                     text=question_text,
+                    image=q_image_val if q_image_val else None,
                     year=q_year,
                     explanation=explanation,
                     creator=user
@@ -1526,6 +1548,29 @@ class ExamAttemptListView(APIView):
         })
 
 
+def resolve_question_image_url(question, request=None):
+    """Safely resolve an absolute URL for a question's image, supporting Cloudinary, remote URLs, and local files."""
+    if not question or not getattr(question, 'image', None):
+        return None
+    image_str = str(question.image).strip()
+    if not image_str:
+        return None
+    if image_str.startswith(('http://', 'https://')):
+        return image_str
+    if image_str.startswith('//'):
+        return f"https:{image_str}"
+    try:
+        url = question.image.url
+        if url.startswith(('http://', 'https://')):
+            return url
+        if url.startswith('//'):
+            return f"https:{url}"
+        if request:
+            return request.build_absolute_uri(url)
+        return url
+    except Exception:
+        return image_str if image_str.startswith(('http://', 'https://')) else None
+
 class GetExamQuestionsView(APIView):
     """Get paginated questions for an active exam attempt, optionally filtered by subject"""
     permission_classes = [permissions.IsAuthenticated]
@@ -1555,7 +1600,7 @@ class GetExamQuestionsView(APIView):
             questions_data.append({
                 'id': question.id,
                 'text': format_math_question(question.text),
-                'image': request.build_absolute_uri(question.image.url) if question.image else None,
+                'image': resolve_question_image_url(question, request),
                 'choices': [
                     {'id': c.id, 'text': format_math_question(c.text)}
                     for c in question.choices.all()
