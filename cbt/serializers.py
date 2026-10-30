@@ -15,7 +15,87 @@ def format_math_text(text):
     return format_math_question(text)
 
 
+def resolve_question_image_url(question, request=None):
+    """
+    Safely resolve an absolute URL for a question's image, supporting Cloudinary,
+    remote URLs, and local files without raising exceptions if storage is unconfigured.
+    """
+    if not question:
+        return None
+    image_field = getattr(question, 'image', None)
+    if not image_field:
+        return None
+    image_str = str(image_field).strip()
+    if not image_str:
+        return None
+    if image_str.startswith(('http://', 'https://')):
+        return image_str
+    if image_str.startswith('//'):
+        return f"https:{image_str}"
+    try:
+        url = image_field.url
+        if url.startswith(('http://', 'https://')):
+            return url
+        if url.startswith('//'):
+            return f"https:{url}"
+        if request:
+            return request.build_absolute_uri(url)
+        return url
+    except Exception:
+        if image_str.startswith(('http://', 'https://')):
+            return image_str
+        try:
+            from django.conf import settings
+            media_url = getattr(settings, 'MEDIA_URL', '/media/')
+            fallback_url = f"{media_url.rstrip('/')}/{image_str.lstrip('/')}"
+            if request:
+                return request.build_absolute_uri(fallback_url)
+            return fallback_url
+        except Exception:
+            return None
+
+
+class SafeImageField(serializers.ImageField):
+    """
+    ImageField that safely handles URL generation, catching storage exceptions
+    (e.g., Cloudinary configuration errors, missing cloud_name, filesystem errors)
+    without crashing serialization.
+    """
+    def to_representation(self, value):
+        if not value:
+            return None
+        val_str = str(value).strip()
+        if not val_str:
+            return None
+        if val_str.startswith(('http://', 'https://')):
+            return val_str
+        if val_str.startswith('//'):
+            return f"https:{val_str}"
+        try:
+            url = value.url
+            if url.startswith(('http://', 'https://')):
+                return url
+            if url.startswith('//'):
+                return f"https:{url}"
+            request = self.context.get('request', None)
+            if request is not None:
+                return request.build_absolute_uri(url)
+            return url
+        except Exception:
+            try:
+                from django.conf import settings
+                media_url = getattr(settings, 'MEDIA_URL', '/media/')
+                fallback_url = f"{media_url.rstrip('/')}/{val_str.lstrip('/')}"
+                request = self.context.get('request', None)
+                if request is not None:
+                    return request.build_absolute_uri(fallback_url)
+                return fallback_url
+            except Exception:
+                return None
+
+
 class CountrySerializer(serializers.ModelSerializer):
+    flag_image = SafeImageField(required=False, allow_null=True)
     folder_count = serializers.SerializerMethodField()
     exam_count = serializers.SerializerMethodField()
 
@@ -45,6 +125,7 @@ class ExamFolderSerializer(serializers.ModelSerializer):
     country_tag_details = CountrySerializer(source='country_tags', many=True, read_only=True)
     country_name = serializers.CharField(source='country.name', read_only=True, allow_null=True)
     parent_name = serializers.CharField(source='parent.name', read_only=True)
+    cover_image = SafeImageField(required=False, allow_null=True)
 
     class Meta:
         model = ExamFolder
@@ -95,6 +176,7 @@ class ChoiceSerializer(serializers.ModelSerializer):
 class QuestionSerializer(serializers.ModelSerializer):
     choices = ChoiceSerializer(many=True, required=False)
     assigned_subject_ids = serializers.SerializerMethodField()
+    image = SafeImageField(required=False, allow_null=True)
 
     class Meta:
         model = Question
@@ -204,7 +286,7 @@ class StudentAnswerSerializer(serializers.ModelSerializer):
     question_text = serializers.CharField(source='question.text', read_only=True)
     correct_choice_id = serializers.SerializerMethodField()
     correct_answer = serializers.SerializerMethodField()
-    question_image = serializers.ImageField(source='question.image', read_only=True)
+    question_image = serializers.SerializerMethodField()
 
     class Meta:
         model = StudentAnswer
@@ -225,17 +307,19 @@ class StudentAnswerSerializer(serializers.ModelSerializer):
     def get_correct_answer(self, obj):
         correct_choice = obj.question.choices.filter(is_correct=True).first()
         return format_math_text(correct_choice.text) if correct_choice else None
+
+    def get_question_image(self, obj):
+        question = getattr(obj, 'question', None)
+        if not question or not getattr(question, 'image', None):
+            return None
+        return resolve_question_image_url(question, self.context.get('request'))
     
     def to_representation(self, instance):
         """Format question and answer text with LaTeX when serializing"""
         data = super().to_representation(instance)
         data['question_text'] = format_math_text(data['question_text'])
-        if instance.question and instance.question.image:
-            img_str = str(instance.question.image).strip()
-            if img_str.startswith(('http://', 'https://')):
-                data['question_image'] = img_str
-            elif img_str.startswith('//'):
-                data['question_image'] = f"https:{img_str}"
+        if not data.get('question_image') and instance.question and instance.question.image:
+            data['question_image'] = resolve_question_image_url(instance.question, self.context.get('request'))
         return data
 
 

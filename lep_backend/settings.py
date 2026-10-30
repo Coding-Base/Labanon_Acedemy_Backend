@@ -18,6 +18,40 @@ DEBUG = os.environ.get('DJ_DEBUG', 'True').lower() in ('1', 'true', 'yes')
 # ALLOWED_HOSTS: Handling comma-separated string from Env
 ALLOWED_HOSTS = ['*'] if DEBUG else os.environ.get('ALLOWED_HOSTS', '').split(',')
 
+# Cloudinary credentials resolution: check individual vars and fallback to CLOUDINARY_URL
+CLOUDINARY_CLOUD_NAME = os.environ.get('CLOUDINARY_CLOUD_NAME', '').strip()
+CLOUDINARY_API_KEY = os.environ.get('CLOUDINARY_API_KEY', '').strip()
+CLOUDINARY_API_SECRET = os.environ.get('CLOUDINARY_API_SECRET', '').strip()
+CLOUDINARY_URL = os.environ.get('CLOUDINARY_URL', '').strip()
+
+if CLOUDINARY_URL and not CLOUDINARY_CLOUD_NAME:
+    try:
+        from urllib.parse import urlparse
+        _parsed = urlparse(CLOUDINARY_URL)
+        if _parsed.hostname:
+            CLOUDINARY_CLOUD_NAME = _parsed.hostname
+        if _parsed.username:
+            CLOUDINARY_API_KEY = _parsed.username
+        if _parsed.password:
+            CLOUDINARY_API_SECRET = _parsed.password
+    except Exception:
+        pass
+
+_use_cloudinary_env = os.environ.get('USE_CLOUDINARY')
+if _use_cloudinary_env is not None:
+    USE_CLOUDINARY = _use_cloudinary_env.strip().lower() in ('1', 'true', 'yes')
+else:
+    # Auto-enable Cloudinary if CLOUDINARY_URL or CLOUDINARY_CLOUD_NAME is provided in deployment environment
+    USE_CLOUDINARY = bool(CLOUDINARY_CLOUD_NAME or CLOUDINARY_URL)
+
+if USE_CLOUDINARY and not CLOUDINARY_CLOUD_NAME:
+    import logging
+    logging.getLogger(__name__).warning(
+        "USE_CLOUDINARY is enabled, but neither CLOUDINARY_CLOUD_NAME nor CLOUDINARY_URL is configured. "
+        "Disabling Cloudinary to prevent application crashes."
+    )
+    USE_CLOUDINARY = False
+
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -25,13 +59,13 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     # cloudinary_storage must be before django.contrib.staticfiles for ImageField handling
-    'cloudinary_storage' if os.environ.get('USE_CLOUDINARY', 'False').lower() in ('1', 'true', 'yes') else None,
+    'cloudinary_storage' if USE_CLOUDINARY else None,
     'django.contrib.staticfiles',
     'corsheaders',
     'rest_framework',
     'djoser',
     'anymail',
-    'cloudinary' if os.environ.get('USE_CLOUDINARY', 'False').lower() in ('1', 'true', 'yes') else None,
+    'cloudinary' if USE_CLOUDINARY else None,
     'users',
     'courses',
     'materials',
@@ -43,7 +77,7 @@ INSTALLED_APPS = [
     'messaging',
     'mock_exams',
     'lessons',
-]
+    ]
 INSTALLED_APPS = [a for a in INSTALLED_APPS if a]
 
 MIDDLEWARE = [
@@ -167,20 +201,30 @@ MEDIA_ROOT = os.environ.get('MEDIA_ROOT', str(BASE_DIR / 'media'))
 
 # Storage Configuration
 # Priority: Cloudinary > Filesystem (S3 is only for videos via explicit storage class)
-USE_CLOUDINARY = os.environ.get('USE_CLOUDINARY', 'False').lower() in ('1', 'true', 'yes')
 USE_AWS_S3 = os.environ.get('USE_AWS_S3', 'False').lower() in ('1', 'true', 'yes')
 
 # Default storage for general media (images, documents, etc.) - NOT videos
-if USE_CLOUDINARY:
-    # Cloudinary credentials – required by django-cloudinary-storage so that
+if USE_CLOUDINARY and CLOUDINARY_CLOUD_NAME:
+    # Cloudinary credentials - required by django-cloudinary-storage so that
     # Django ImageField uploads (e.g. CBT question images) are persisted to
     # Cloudinary instead of ephemeral container disk.
     CLOUDINARY_STORAGE = {
-        'CLOUD_NAME': os.environ.get('CLOUDINARY_CLOUD_NAME', ''),
-        'API_KEY': os.environ.get('CLOUDINARY_API_KEY', ''),
-        'API_SECRET': os.environ.get('CLOUDINARY_API_SECRET', ''),
+        'CLOUD_NAME': CLOUDINARY_CLOUD_NAME,
+        'API_KEY': CLOUDINARY_API_KEY,
+        'API_SECRET': CLOUDINARY_API_SECRET,
         'SECURE': True,
     }
+    try:
+        import cloudinary
+        cloudinary.config(
+            cloud_name=CLOUDINARY_CLOUD_NAME,
+            api_key=CLOUDINARY_API_KEY,
+            api_secret=CLOUDINARY_API_SECRET,
+            secure=True
+        )
+    except ImportError:
+        pass
+
     DEFAULT_FILE_STORAGE = 'cloudinary_storage.storage.MediaCloudinaryStorage'
     STORAGES = {
         'default': {

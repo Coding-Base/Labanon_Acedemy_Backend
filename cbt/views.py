@@ -1506,12 +1506,13 @@ class ExamAttemptViewSet(viewsets.ModelViewSet):
             wrong_answers_data.append({
                 'question_id': answer.question.id,
                 'question_text': answer.question.text,
+                'question_image': resolve_question_image_url(answer.question, request),
                 'user_answer': answer.selected_choice.text if answer.selected_choice else 'Not answered',
                 'correct_answer': correct_choice.text if correct_choice else 'N/A',
                 'explanation': getattr(answer.question, 'explanation', 'No explanation available')
             })
 
-        serializer = ExamAttemptDetailSerializer(exam_attempt)
+        serializer = ExamAttemptDetailSerializer(exam_attempt, context={'request': request})
         data = serializer.data
         data['wrong_answers'] = wrong_answers_data
 
@@ -1550,9 +1551,12 @@ class ExamAttemptListView(APIView):
 
 def resolve_question_image_url(question, request=None):
     """Safely resolve an absolute URL for a question's image, supporting Cloudinary, remote URLs, and local files."""
-    if not question or not getattr(question, 'image', None):
+    if not question:
         return None
-    image_str = str(question.image).strip()
+    image_field = getattr(question, 'image', None)
+    if not image_field:
+        return None
+    image_str = str(image_field).strip()
     if not image_str:
         return None
     if image_str.startswith(('http://', 'https://')):
@@ -1560,7 +1564,7 @@ def resolve_question_image_url(question, request=None):
     if image_str.startswith('//'):
         return f"https:{image_str}"
     try:
-        url = question.image.url
+        url = image_field.url
         if url.startswith(('http://', 'https://')):
             return url
         if url.startswith('//'):
@@ -1569,7 +1573,17 @@ def resolve_question_image_url(question, request=None):
             return request.build_absolute_uri(url)
         return url
     except Exception:
-        return image_str if image_str.startswith(('http://', 'https://')) else None
+        if image_str.startswith(('http://', 'https://')):
+            return image_str
+        try:
+            from django.conf import settings
+            media_url = getattr(settings, 'MEDIA_URL', '/media/')
+            fallback_url = f"{media_url.rstrip('/')}/{image_str.lstrip('/')}"
+            if request:
+                return request.build_absolute_uri(fallback_url)
+            return fallback_url
+        except Exception:
+            return None
 
 class GetExamQuestionsView(APIView):
     """Get paginated questions for an active exam attempt, optionally filtered by subject"""
