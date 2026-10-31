@@ -264,11 +264,34 @@ def upload_blog_image(request):
     file_obj = request.FILES.get('image') or request.FILES.get('file')
     if not file_obj:
         return Response({'detail': 'No image provided'}, status=status.HTTP_400_BAD_REQUEST)
-    
-    ext = os.path.splitext(file_obj.name)[1].lower()
+
+    ext = os.path.splitext(file_obj.name)[1].lower() or '.jpg'
     filename = f"blog_images/{uuid.uuid4()}{ext}"
+
+    use_cloudinary = getattr(settings, 'USE_CLOUDINARY', False) or bool(os.environ.get('CLOUDINARY_URL') or os.environ.get('CLOUDINARY_CLOUD_NAME'))
+    if use_cloudinary:
+        try:
+            import cloudinary.uploader
+            upload_result = cloudinary.uploader.upload(
+                file_obj,
+                folder="media/blog_images",
+                resource_type="image",
+                use_filename=True,
+                unique_filename=True
+            )
+            url = upload_result.get('secure_url') or upload_result.get('url')
+            if url:
+                if not re.search(r'\.(jpg|jpeg|png|webp|gif)$', url, re.I):
+                    url = f"{url}{ext}"
+                return Response({'url': url})
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Direct Cloudinary upload failed, falling back to storage: {e}")
+
     saved_path = default_storage.save(filename, ContentFile(file_obj.read()))
     url = default_storage.url(saved_path)
+    if url and 'res.cloudinary.com' in url and not re.search(r'\.(jpg|jpeg|png|webp|gif)$', url, re.I):
+        url = f"{url}{ext}"
     return Response({'url': url})
 
 

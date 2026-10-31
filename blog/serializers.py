@@ -146,7 +146,7 @@ class BlogSerializer(serializers.ModelSerializer):
                 raw = base64.b64decode(b64data)
                 filename = f"blog_images/{uuid.uuid4().hex}{ext}"
 
-                use_cloudinary = os.environ.get('USE_CLOUDINARY', 'False').lower() in ('1', 'true', 'yes')
+                use_cloudinary = getattr(settings, 'USE_CLOUDINARY', False) or bool(os.environ.get('CLOUDINARY_URL') or os.environ.get('CLOUDINARY_CLOUD_NAME'))
                 if use_cloudinary:
                     try:
                         from cloudinary_storage.storage import MediaCloudinaryStorage
@@ -159,6 +159,8 @@ class BlogSerializer(serializers.ModelSerializer):
                 saved_name = storage.save(filename, ContentFile(raw))
                 try:
                     image_url = storage.url(saved_name)
+                    if 'res.cloudinary.com' in image_url and not re.search(r'\.(jpg|jpeg|png|webp|gif)$', image_url, re.I):
+                        image_url = f"{image_url}{ext if ext else '.jpg'}"
                 except Exception:
                     image_url = f"{getattr(settings, 'MEDIA_URL', '/media/')}{saved_name}"
 
@@ -185,7 +187,7 @@ class BlogSerializer(serializers.ModelSerializer):
             filename = f"blog_images/{uuid.uuid4().hex}{ext}"
             
             # Use Cloudinary explicitly for blog images
-            use_cloudinary = os.environ.get('USE_CLOUDINARY', 'False').lower() in ('1', 'true', 'yes')
+            use_cloudinary = getattr(settings, 'USE_CLOUDINARY', False) or bool(os.environ.get('CLOUDINARY_URL') or os.environ.get('CLOUDINARY_CLOUD_NAME'))
             
             if use_cloudinary:
                 try:
@@ -215,7 +217,7 @@ class BlogSerializer(serializers.ModelSerializer):
                 filename = f"blog_images/{uuid.uuid4().hex}{ext}"
                 
                 # Use Cloudinary explicitly for blog images
-                use_cloudinary = os.environ.get('USE_CLOUDINARY', 'False').lower() in ('1', 'true', 'yes')
+                use_cloudinary = getattr(settings, 'USE_CLOUDINARY', False) or bool(os.environ.get('CLOUDINARY_URL') or os.environ.get('CLOUDINARY_CLOUD_NAME'))
                 
                 if use_cloudinary:
                     try:
@@ -260,7 +262,7 @@ class BlogSerializer(serializers.ModelSerializer):
             filename = f"blog_images/{uuid.uuid4().hex}{ext}"
             
             # Use Cloudinary explicitly for blog images
-            use_cloudinary = os.environ.get('USE_CLOUDINARY', 'False').lower() in ('1', 'true', 'yes')
+            use_cloudinary = getattr(settings, 'USE_CLOUDINARY', False) or bool(os.environ.get('CLOUDINARY_URL') or os.environ.get('CLOUDINARY_CLOUD_NAME'))
             
             if use_cloudinary:
                 try:
@@ -289,7 +291,7 @@ class BlogSerializer(serializers.ModelSerializer):
                 filename = f"blog_images/{uuid.uuid4().hex}{ext}"
                 
                 # Use Cloudinary explicitly for blog images
-                use_cloudinary = os.environ.get('USE_CLOUDINARY', 'False').lower() in ('1', 'true', 'yes')
+                use_cloudinary = getattr(settings, 'USE_CLOUDINARY', False) or bool(os.environ.get('CLOUDINARY_URL') or os.environ.get('CLOUDINARY_CLOUD_NAME'))
                 
                 if use_cloudinary:
                     try:
@@ -349,7 +351,7 @@ class BlogAdSerializer(serializers.ModelSerializer):
         if image_file and isinstance(image_file, UploadedFile):
             ext = os.path.splitext(image_file.name)[1] or ''
             filename = f"blog_ads/{uuid.uuid4().hex}{ext}"
-            use_cloudinary = os.environ.get('USE_CLOUDINARY', 'False').lower() in ('1', 'true', 'yes')
+            use_cloudinary = getattr(settings, 'USE_CLOUDINARY', False) or bool(os.environ.get('CLOUDINARY_URL') or os.environ.get('CLOUDINARY_CLOUD_NAME'))
             if use_cloudinary:
                 try:
                     from cloudinary_storage.storage import MediaCloudinaryStorage
@@ -375,7 +377,7 @@ class BlogAdSerializer(serializers.ModelSerializer):
         if image_file and isinstance(image_file, UploadedFile):
             ext = os.path.splitext(image_file.name)[1] or ''
             filename = f"blog_ads/{uuid.uuid4().hex}{ext}"
-            use_cloudinary = os.environ.get('USE_CLOUDINARY', 'False').lower() in ('1', 'true', 'yes')
+            use_cloudinary = getattr(settings, 'USE_CLOUDINARY', False) or bool(os.environ.get('CLOUDINARY_URL') or os.environ.get('CLOUDINARY_CLOUD_NAME'))
             if use_cloudinary:
                 try:
                     from cloudinary_storage.storage import MediaCloudinaryStorage
