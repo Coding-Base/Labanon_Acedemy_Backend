@@ -22,6 +22,7 @@ class User(AbstractUser):
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default=STUDENT)
     institution_name = models.CharField(max_length=255, blank=True, null=True)
     is_unlocked = models.BooleanField(default=False)
+    profile_image = models.ImageField(upload_to='profile_images/', blank=True, null=True)
     
     # Email verification fields
     email_verified = models.BooleanField(default=False)

@@ -1266,15 +1266,83 @@ class TutorApplicationView(APIView):
 
 
 class TutorsLeaderboardView(APIView):
-    """Get tutors leaderboard based on course sales and performance"""
+    """Get tutors leaderboard based on course sales, enrollments, and performance, with drill-down support by tutor_id"""
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        from django.db.models import Count, Avg
-        
+        from django.db.models import Count, Avg, Sum
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+
+        tutor_id = request.query_params.get('tutor_id')
         limit = int(request.query_params.get('limit', 50))
-        
-        # Get top tutors by total enrollments (sales)
+
+        # Single Tutor Drill-Down Report
+        if tutor_id:
+            try:
+                tutor = User.objects.get(pk=tutor_id, role='tutor')
+            except User.DoesNotExist:
+                return Response({'detail': 'Tutor not found'}, status=status.HTTP_404_NOT_FOUND)
+
+            courses = Course.objects.filter(creator=tutor).annotate(
+                enrollments_count=Count('enrollments', distinct=True),
+                avg_rating=Avg('reviews__rating')
+            ).order_by('-enrollments_count')
+
+            total_enrollments = sum(c.enrollments_count for c in courses)
+            total_revenue = sum(
+                float(c.price or 0) * c.enrollments_count for c in courses
+            )
+
+            # Calculate rank among all tutors
+            all_tutors = User.objects.filter(role='tutor').annotate(
+                sales_count=Count('courses__enrollments', distinct=True),
+                c_count=Count('courses', distinct=True)
+            ).order_by('-sales_count', '-c_count')
+
+            tutor_rank = None
+            for idx, t in enumerate(all_tutors, 1):
+                if t.id == tutor.id:
+                    tutor_rank = idx
+                    break
+
+            courses_data = []
+            for c in courses:
+                courses_data.append({
+                    'id': c.id,
+                    'title': c.title,
+                    'category': getattr(c.category, 'name', '') if hasattr(c, 'category') and c.category else '',
+                    'price': float(c.price or 0),
+                    'enrollments_count': c.enrollments_count,
+                    'rating': round(float(c.avg_rating or 5.0), 1) if c.avg_rating else 5.0,
+                    'status': getattr(c, 'status', 'published'),
+                    'revenue': float(c.price or 0) * c.enrollments_count
+                })
+
+            avg_rating = tutor.courses.aggregate(avg=Avg('reviews__rating'))['avg']
+            full_name = f"{tutor.first_name} {tutor.last_name}".strip() or tutor.username
+
+            return Response({
+                'tutor_id': tutor.id,
+                'name': full_name,
+                'username': tutor.username,
+                'email': tutor.email,
+                'rank': tutor_rank,
+                'total_tutors_ranked': all_tutors.count(),
+                'total_courses': courses.count(),
+                'total_students_taught': total_enrollments,
+                'total_revenue': total_revenue,
+                'average_rating': round(float(avg_rating or 5.0), 1) if avg_rating else 5.0,
+                'metrics': {
+                    'total_courses': courses.count(),
+                    'total_students_taught': total_enrollments,
+                    'total_revenue': total_revenue,
+                    'average_rating': round(float(avg_rating or 5.0), 1) if avg_rating else 5.0,
+                },
+                'courses': courses_data
+            })
+
+        # Global Tutors Leaderboard
         tutors_stats = User.objects.filter(
             role='tutor'
         ).annotate(
@@ -1282,20 +1350,26 @@ class TutorsLeaderboardView(APIView):
             courses_count=Count('courses', distinct=True),
             avg_rating=Avg('courses__reviews__rating')
         ).order_by('-total_enrollments', '-courses_count')[:limit]
-        
-        # Convert to response format
-        leaderboard_data = [
-            {
+
+        leaderboard_data = []
+        for idx, tutor in enumerate(tutors_stats, 1):
+            full_name = f"{tutor.first_name} {tutor.last_name}".strip() or tutor.username
+            t_courses = tutor.courses.annotate(e_count=Count('enrollments', distinct=True))
+            rev = sum(float(c.price or 0) * c.e_count for c in t_courses)
+            leaderboard_data.append({
+                'rank': idx,
                 'id': tutor.id,
                 'username': tutor.username,
-                'name': f"{tutor.first_name} {tutor.last_name}".strip() or tutor.username,
+                'name': full_name,
+                'email': tutor.email,
                 'sales': tutor.total_enrollments or 0,
+                'students_taught': tutor.total_enrollments or 0,
                 'courses_created': tutor.courses_count or 0,
-                'rating': float(tutor.avg_rating or 4.0)
-            }
-            for tutor in tutors_stats
-        ]
-        
+                'total_revenue': rev,
+                'rating': round(float(tutor.avg_rating or 5.0), 1) if tutor.avg_rating else 5.0,
+                'avatar_initial': full_name[0].upper() if full_name else 'T'
+            })
+
         return Response(leaderboard_data)
 
 

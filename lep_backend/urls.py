@@ -1,4 +1,5 @@
-from django.urls import path, include
+from django.urls import path, include, re_path
+from django.views.static import serve
 from rest_framework.routers import DefaultRouter
 from django.contrib import admin
 from users.views import DashboardView
@@ -73,3 +74,8 @@ if settings.DEBUG:
     import os
     app_courses_dir = os.path.join(settings.BASE_DIR, 'courses')
     urlpatterns += static('/media/courses/', document_root=app_courses_dir)
+else:
+    # Fallback media serving for production container environments (Dokploy/Gunicorn)
+    urlpatterns += [
+        re_path(r'^media/(?P<path>.*)$', serve, {'document_root': settings.MEDIA_ROOT}),
+    ]

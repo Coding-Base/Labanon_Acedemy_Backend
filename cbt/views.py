@@ -1611,10 +1611,12 @@ class GetExamQuestionsView(APIView):
         questions_data = []
         for answer in paginated_answers:
             question = answer.question
+            img_url = resolve_question_image_url(question, request)
             questions_data.append({
                 'id': question.id,
                 'text': format_math_question(question.text),
-                'image': resolve_question_image_url(question, request),
+                'image': img_url,
+                'question_image': img_url,
                 'choices': [
                     {'id': c.id, 'text': format_math_question(c.text)}
                     for c in question.choices.all()
@@ -1685,103 +1687,248 @@ class ExamProgressView(APIView):
 
 
 class AnalyticsView(APIView):
-    """Get CBT analytics for admin dashboard"""
+    """Get CBT analytics for admin dashboard with accurate percentages and completion metrics"""
     permission_classes = [IsMasterAdmin]
 
     def get(self, request):
-        from django.db.models import Count, Avg, F
+        from django.db.models import Count, Avg, F, Q, Sum
+        from django.conf import settings
         
-        # Get total exam attempts
+        # Total registered exams
+        total_exams = Exam.objects.count()
+
+        # All attempts vs submitted attempts
         total_attempts = ExamAttempt.objects.count()
-        
-        # Get average score
-        avg_score = ExamAttempt.objects.aggregate(avg=Avg('score'))['avg'] or 0
-        
-        # Get subjects with attempt counts
-        subjects_data = Subject.objects.annotate(
-            attempt_count=Count('attempts', distinct=True),
-            avg_score=Avg('attempts__score')
-        ).values('name', 'attempt_count', 'avg_score').order_by('-attempt_count')
-        
-        # Get today's attempts
-        today = timezone.now().date()
-        today_attempts = ExamAttempt.objects.filter(
-            started_at__date=today
-        ).count()
-        
-        # Compute pass rate (default pass threshold 50%)
+        submitted_attempts = ExamAttempt.objects.filter(is_submitted=True)
+        submitted_count = submitted_attempts.count()
+
+        # Filter submitted attempts that have questions for percentage calculations
+        valid_attempts = submitted_attempts.filter(num_questions__gt=0)
+        valid_count = valid_attempts.count()
+
+        # True average percentage score: (score / num_questions * 100)
+        if valid_count > 0:
+            total_percentage = sum((a.score / a.num_questions) * 100.0 for a in valid_attempts)
+            average_percentage = round(total_percentage / valid_count, 1)
+        else:
+            average_percentage = 0.0
+
+        # Pass rate: score / num_questions >= 50% (or CBT_PASS_THRESHOLD)
         PASS_THRESHOLD = getattr(settings, 'CBT_PASS_THRESHOLD', 50)
-        passed_attempts = ExamAttempt.objects.filter(score__gte=PASS_THRESHOLD).count()
-        pass_rate = (passed_attempts / total_attempts) if total_attempts > 0 else 0
+        pass_ratio = PASS_THRESHOLD / 100.0
+        passed_attempts = valid_attempts.filter(score__gte=F('num_questions') * pass_ratio).count()
+        pass_rate = round(passed_attempts / submitted_count, 3) if submitted_count > 0 else 0.0
 
-        # Average time taken (seconds -> minutes)
-        avg_time_seconds = ExamAttempt.objects.aggregate(avg_time=Avg('time_taken_seconds'))['avg_time']
-        avg_time_minutes = (float(avg_time_seconds) / 60.0) if avg_time_seconds is not None else None
+        # Average time taken (seconds -> minutes) for completed attempts
+        time_attempts = submitted_attempts.filter(time_taken_seconds__gt=0)
+        avg_time_seconds = time_attempts.aggregate(avg_time=Avg('time_taken_seconds'))['avg_time']
+        avg_time_minutes = round(float(avg_time_seconds) / 60.0, 1) if avg_time_seconds is not None else None
 
-        # Active students (unique users who attempted)
+        # Subjects with attempt counts
+        subjects_data = Subject.objects.annotate(
+            attempt_count=Count('attempts', distinct=True)
+        ).values('id', 'name', 'attempt_count').order_by('-attempt_count')
+
+        subjects_list = []
+        for s in subjects_data:
+            s_attempts = valid_attempts.filter(subject_id=s['id'])
+            s_count = s_attempts.count()
+            s_avg = round(sum((a.score / a.num_questions) * 100.0 for a in s_attempts) / s_count, 1) if s_count > 0 else None
+            subjects_list.append({
+                'id': s['id'],
+                'name': s['name'],
+                'attempts': s['attempt_count'],
+                'attempt_count': s['attempt_count'],
+                'avg_percentage': s_avg
+            })
+
+        # Today's attempts
+        today = timezone.now().date()
+        today_attempts = ExamAttempt.objects.filter(started_at__date=today).count()
+
+        # Active students (unique users who attempted exams)
         active_students = ExamAttempt.objects.values('user').distinct().count()
 
-        # Top scorers (top attempts by score)
-        top_attempts_qs = ExamAttempt.objects.filter(score__isnull=False).select_related('user', 'exam', 'subject').order_by('-score', '-submitted_at')[:10]
+        # Top scorers: rank by percentage score
+        top_attempts_sorted = sorted(
+            valid_attempts.select_related('user', 'exam', 'subject'),
+            key=lambda a: (a.score / a.num_questions if a.num_questions else 0, a.score),
+            reverse=True
+        )[:10]
+
         top_scorers = []
-        for a in top_attempts_qs:
+        for a in top_attempts_sorted:
+            pct = round((a.score / a.num_questions) * 100, 1) if a.num_questions else 0
+            u_name = a.user.get_full_name() or a.user.username if a.user else str(a.user_id)
             top_scorers.append({
                 'id': a.id,
                 'user_id': a.user_id,
-                'name': getattr(a.user, 'username', None) or getattr(a.user, 'full_name', None) or str(a.user_id),
+                'name': u_name,
                 'exam': a.exam.title if a.exam else None,
-                'subject': a.subject.name if a.subject else None,
-                'score': float(a.score) if a.score is not None else None,
-                'date': a.submitted_at.isoformat() if a.submitted_at else (a.finished_at.isoformat() if a.finished_at else a.started_at.isoformat())
+                'subject': a.subject.name if a.subject else (a.test_name or 'General'),
+                'score': pct,
+                'raw_score': float(a.score) if a.score is not None else 0,
+                'total_questions': a.num_questions,
+                'date': a.submitted_at.isoformat() if a.submitted_at else a.started_at.isoformat()
             })
 
-        top_subject = None
-        if len(subjects_data) > 0:
-            top_subject = subjects_data[0]['name']
+        top_subject = subjects_list[0]['name'] if len(subjects_list) > 0 and subjects_list[0]['attempts'] > 0 else (subjects_list[0]['name'] if subjects_list else None)
 
         return Response({
             'total_attempts': total_attempts,
-            'total_exams': Exam.objects.count(),
-            'average_score': float(avg_score),
+            'submitted_attempts': submitted_count,
+            'total_exams': total_exams,
+            'average_score': average_percentage,
             'today_attempts': today_attempts,
-            'subjects': list(subjects_data[:10]),  # Top 10 subjects
+            'subjects': subjects_list[:10],
             'passed_attempts': passed_attempts,
-            'pass_rate': float(pass_rate),
+            'pass_rate': pass_rate,
             'average_time_seconds': float(avg_time_seconds) if avg_time_seconds is not None else None,
-            'average_time_minutes': float(avg_time_minutes) if avg_time_minutes is not None else None,
+            'average_time_minutes': avg_time_minutes,
             'active_students_count': active_students,
             'top_scorers': top_scorers,
             'top_subject': top_subject,
         })
 
+
 class StudentLeaderboardView(APIView):
-    """Get student leaderboard based on exam scores"""
+    """Get student leaderboard based on exam performance, with drill-down support by user_id"""
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        from django.db.models import Count, Avg, Max
-        
+        from django.db.models import Count, Sum, Max
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+
+        user_id = request.query_params.get('user_id')
         limit = int(request.query_params.get('limit', 50))
-        
-        # Get top students by average score
-        students_stats = ExamAttempt.objects.filter(
-            is_submitted=True
-        ).values('user__id', 'user__username').annotate(
-            avg_score=Avg('score'),
-            high_score=Max('score'),
-            attempts_count=Count('id', distinct=True)
-        ).order_by('-avg_score', '-high_score')[:limit]
-        
-        # Convert to response format
-        leaderboard_data = [
-            {
-                'id': stats['user__id'],
-                'username': stats['user__username'],
-                'avg_score': float(stats['avg_score'] or 0),
-                'high_score': float(stats['high_score'] or 0),
-                'attempts_count': stats['attempts_count']
-            }
-            for stats in students_stats
-        ]
-        
-        return Response(leaderboard_data)
+
+        # Single Student Drill-Down Report
+        if user_id:
+            try:
+                target_user = User.objects.get(pk=user_id)
+            except User.DoesNotExist:
+                return Response({'detail': 'Student not found'}, status=status.HTTP_404_NOT_FOUND)
+
+            user_attempts = ExamAttempt.objects.filter(
+                user=target_user, is_submitted=True
+            ).select_related('exam', 'subject').order_by('-submitted_at')
+
+            attempts_data = []
+            passed_count = 0
+            total_pct = 0.0
+            high_pct = 0.0
+
+            for a in user_attempts:
+                num_q = a.num_questions or 1
+                pct = round((a.score / num_q) * 100, 1) if a.score is not None else 0.0
+                is_passed = pct >= 50.0
+                if is_passed:
+                    passed_count += 1
+                total_pct += pct
+                if pct > high_pct:
+                    high_pct = pct
+
+                attempts_data.append({
+                    'id': a.id,
+                    'exam_title': a.exam.title if a.exam else (a.test_name or 'Practice Exam'),
+                    'subject_name': a.subject.name if a.subject else 'General',
+                    'score': float(a.score) if a.score is not None else 0.0,
+                    'num_questions': a.num_questions,
+                    'percentage': pct,
+                    'percentage_score': pct,
+                    'is_passed': is_passed,
+                    'time_taken_seconds': a.time_taken_seconds,
+                    'time_taken_formatted': f"{a.time_taken_seconds // 60}m {a.time_taken_seconds % 60}s" if a.time_taken_seconds else 'N/A',
+                    'submitted_at': a.submitted_at.isoformat() if a.submitted_at else None
+                })
+
+            total_exams = user_attempts.count()
+            avg_pct = round(total_pct / total_exams, 1) if total_exams > 0 else 0.0
+            pass_rate = round((passed_count / total_exams) * 100, 1) if total_exams > 0 else 0.0
+
+            # Rank calculation across all students who took exams
+            all_students_agg = ExamAttempt.objects.filter(
+                is_submitted=True, num_questions__gt=0
+            ).values('user').annotate(
+                total_s=Sum('score'),
+                total_q=Sum('num_questions')
+            )
+            scored = []
+            for s in all_students_agg:
+                s_pct = (s['total_s'] / s['total_q'] * 100) if s['total_q'] else 0
+                scored.append((s['user'], s_pct))
+            scored.sort(key=lambda x: x[1], reverse=True)
+
+            student_rank = None
+            for idx, (uid, _) in enumerate(scored, 1):
+                if uid == target_user.id:
+                    student_rank = idx
+                    break
+
+            full_name = f"{target_user.first_name} {target_user.last_name}".strip() or target_user.username
+
+            return Response({
+                'student_id': target_user.id,
+                'user_id': target_user.id,
+                'name': full_name,
+                'full_name': full_name,
+                'username': target_user.username,
+                'email': target_user.email,
+                'rank': student_rank,
+                'total_students_ranked': len(scored),
+                'total_ranked_students': len(scored),
+                'total_exams_taken': total_exams,
+                'total_passed': passed_count,
+                'pass_rate': pass_rate,
+                'avg_score_percentage': avg_pct,
+                'high_score_percentage': high_pct,
+                'metrics': {
+                    'exams_taken': total_exams,
+                    'exams_passed': passed_count,
+                    'pass_rate': pass_rate,
+                    'average_score': avg_pct,
+                    'highest_score': high_pct,
+                    'total_points': float(sum(a['score'] for a in attempts_data)) if attempts_data else 0.0,
+                },
+                'attempts': attempts_data[:50],
+                'recent_attempts': attempts_data[:50]
+            })
+
+        # Global Student Leaderboard List
+        all_attempts = ExamAttempt.objects.filter(
+            is_submitted=True, num_questions__gt=0
+        ).values('user__id', 'user__username', 'user__first_name', 'user__last_name', 'user__email').annotate(
+            attempts_count=Count('id', distinct=True),
+            total_score=Sum('score'),
+            total_questions=Sum('num_questions'),
+            max_score=Max('score')
+        )
+
+        ranked = []
+        for s in all_attempts:
+            tot_q = s['total_questions'] or 1
+            tot_s = s['total_score'] or 0
+            avg_pct = round((tot_s / tot_q) * 100, 1)
+            first = s['user__first_name'] or ''
+            last = s['user__last_name'] or ''
+            full_name = f"{first} {last}".strip() or s['user__username']
+            ranked.append({
+                'id': s['user__id'],
+                'user_id': s['user__id'],
+                'username': s['user__username'],
+                'name': full_name,
+                'email': s['user__email'],
+                'avg_score': avg_pct,
+                'score': avg_pct,
+                'high_score': float(s['max_score'] or 0),
+                'attempts_count': s['attempts_count'],
+                'exams_taken': s['attempts_count'],
+                'avatar_initial': full_name[0].upper() if full_name else 'S'
+            })
+
+        ranked.sort(key=lambda x: (x['avg_score'], x['high_score'], x['attempts_count']), reverse=True)
+        for idx, item in enumerate(ranked, 1):
+            item['rank'] = idx
+
+        return Response(ranked[:limit])

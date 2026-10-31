@@ -67,7 +67,15 @@ class DashboardView(APIView):
     def get(self, request):
         user = request.user
         role = user.role
-        data = {'role': role, 'username': user.username}
+        from .serializers import resolve_user_image_url
+        data = {
+            'role': role,
+            'username': user.username,
+            'email': user.email,
+            'first_name': user.first_name,
+            'last_name': user.last_name,
+            'profile_image': resolve_user_image_url(user, request)
+        }
 
         if role == User.TUTOR:
             courses_qs = Course.objects.filter(creator=user)
@@ -154,6 +162,17 @@ class DashboardView(APIView):
             courses_count = Course.objects.count()
             payments_total = Payment.objects.filter(status=Payment.SUCCESS).aggregate(total=Sum('amount'))['total'] or 0
             data.update({'users_count': users_count, 'courses_count': courses_count, 'payments_total': float(payments_total)})
+
+        # If user has a subadmin profile, include all permissions dynamically
+        if hasattr(user, 'subadmin_profile'):
+            profile = user.subadmin_profile
+            perms = dict(profile.permissions or {})
+            for field in ['can_manage_users', 'can_manage_institutions', 'can_manage_courses', 
+                          'can_manage_cbt', 'can_view_payments', 'can_manage_blog', 
+                          'can_manage_subadmins', 'can_view_messages']:
+                if field not in perms:
+                    perms[field] = getattr(profile, field, False)
+            data['subadmin_profile'] = perms
 
         return Response(data)
 
@@ -312,30 +331,63 @@ class ChangePasswordView(APIView):
 
 
 class ProfileUpdateView(APIView):
-    """Endpoint to update user profile information."""
+    """Endpoint to update user profile information, avatar, username, and password."""
     permission_classes = [permissions.IsAuthenticated]
 
     def put(self, request):
+        return self.patch(request)
+
+    def patch(self, request):
         user = request.user
         first_name = request.data.get('first_name')
         last_name = request.data.get('last_name')
         email = request.data.get('email')
+        username = request.data.get('username')
 
-        if email and email != user.email:
-            if User.objects.filter(email=email).exists():
+        if username and username.strip() and username.strip() != user.username:
+            new_username = username.strip()
+            if User.objects.filter(username=new_username).exclude(pk=user.pk).exists():
+                return Response({'error': 'Username already in use'}, status=status.HTTP_400_BAD_REQUEST)
+            user.username = new_username
+
+        if email and email.strip() and email.strip() != user.email:
+            new_email = email.strip()
+            if User.objects.filter(email=new_email).exclude(pk=user.pk).exists():
                 return Response({'error': 'Email already in use'}, status=status.HTTP_400_BAD_REQUEST)
-            user.email = email
+            user.email = new_email
 
-        if first_name:
-            user.first_name = first_name
-        if last_name:
-            user.last_name = last_name
+        if first_name is not None:
+            user.first_name = first_name.strip()
+        if last_name is not None:
+            user.last_name = last_name.strip()
+
+        # Handle profile image upload
+        if 'profile_image' in request.FILES:
+            user.profile_image = request.FILES['profile_image']
+        elif request.data.get('remove_profile_image') in (True, 'true', '1'):
+            user.profile_image = None
+
+        # Optional password change in same request
+        old_password = request.data.get('old_password')
+        new_password = request.data.get('new_password')
+        confirm_password = request.data.get('confirm_password')
+
+        if new_password:
+            if not old_password:
+                return Response({'error': 'Current password is required to set a new password'}, status=status.HTTP_400_BAD_REQUEST)
+            if not user.check_password(old_password):
+                return Response({'error': 'Current password is incorrect'}, status=status.HTTP_400_BAD_REQUEST)
+            if new_password != confirm_password:
+                return Response({'error': 'New passwords do not match'}, status=status.HTTP_400_BAD_REQUEST)
+            if len(new_password) < 8:
+                return Response({'error': 'Password must be at least 8 characters long'}, status=status.HTTP_400_BAD_REQUEST)
+            user.set_password(new_password)
 
         user.save()
 
         return Response({
             'message': 'Profile updated successfully',
-            'user': UserSerializer(user).data
+            'user': UserSerializer(user, context={'request': request}).data
         }, status=status.HTTP_200_OK)
 
 

@@ -15,11 +15,30 @@ except ImportError:
     from rest_framework.serializers import ModelSerializer as DjoserBaseUserCreateSerializer
 
 
+def resolve_user_image_url(user, request=None):
+    if not user or not getattr(user, 'profile_image', None):
+        return None
+    try:
+        url = user.profile_image.url
+        if url.startswith(('http://', 'https://', '//')):
+            return url
+        if request:
+            return request.build_absolute_uri(url)
+        return url
+    except Exception:
+        return None
+
+
 class UserSerializer(serializers.ModelSerializer):
+    profile_image = serializers.SerializerMethodField()
+
     class Meta:
         model = User
-        # include date_joined so frontend can determine trial window
-        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'role', 'institution_name', 'is_unlocked', 'date_joined']
+        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'role', 'institution_name', 'is_unlocked', 'date_joined', 'profile_image']
+
+    def get_profile_image(self, obj):
+        request = self.context.get('request') if hasattr(self, 'context') else None
+        return resolve_user_image_url(obj, request)
 
 
 class RegisterSerializer(serializers.ModelSerializer):
