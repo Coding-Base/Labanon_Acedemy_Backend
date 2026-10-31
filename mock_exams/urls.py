@@ -12,6 +12,7 @@ router.register(r'admin/questions', views.MockExamQuestionViewSet, basename='adm
 router.register(r'admin/options', views.MockExamOptionViewSet, basename='admin-mock-options')
 router.register(r'admin/fees', views.MockExamFeeViewSet, basename='admin-mock-fees')
 router.register(r'admin/platforms', views.MockExamExternalPlatformViewSet, basename='admin-mock-platforms')
+router.register(r'platforms', views.MockExamExternalPlatformViewSet, basename='mock-platforms')
 router.register(r'admin/activity-logs', views.MockExamActivityLogViewSet, basename='admin-mock-activity-logs')
 
 # Student endpoints

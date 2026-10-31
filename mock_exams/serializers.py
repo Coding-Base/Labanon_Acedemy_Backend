@@ -15,12 +15,13 @@ class MockExamOptionSerializer(serializers.ModelSerializer):
     """
     # Write-only file field for image uploads
     option_image_file = serializers.ImageField(write_only=True, required=False)
+    text = serializers.CharField(source='option_text', read_only=True)
     
     class Meta:
         model = MockExamOption
-        fields = ['id', 'question', 'option_text', 'option_image', 'option_image_file',
+        fields = ['id', 'question', 'option_text', 'text', 'option_image', 'option_image_file',
                   'option_letter', 'is_correct', 'explanation', 'order', 'created_at', 'updated_at']
-        read_only_fields = ['id', 'question', 'option_letter', 'order', 'option_image', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'question', 'option_letter', 'order', 'option_image', 'text', 'created_at', 'updated_at']
     
     def update(self, instance, validated_data):
         """Handle file upload if present"""
@@ -132,7 +133,8 @@ class CustomMockExamListSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomMockExam
         fields = ['id', 'title', 'description', 'difficulty_level', 'total_duration_minutes',
-                  'total_marks', 'passing_marks', 'is_published', 'subject_area', 'exam_year',
+                  'total_marks', 'passing_marks', 'is_published', 'is_active', 'is_streaming',
+                  'external_platform', 'external_exam_id', 'subject_area', 'exam_year',
                   'total_attempts', 'avg_score', 'subject_count', 'total_questions', 'fee', 'created_at']
         read_only_fields = ['id', 'created_at', 'total_attempts', 'avg_score']
     
@@ -169,12 +171,14 @@ class CustomMockExamDetailSerializer(serializers.ModelSerializer):
 class MockExamResultSerializer(serializers.ModelSerializer):
     question = MockExamQuestionSerializer(read_only=True)
     selected_option = MockExamOptionSerializer(read_only=True)
+    question_id = serializers.IntegerField(source='question.id', read_only=True)
+    selected_option_id = serializers.IntegerField(source='selected_option.id', read_only=True, allow_null=True)
     
     class Meta:
         model = MockExamResult
-        fields = ['id', 'attempt', 'question', 'selected_option', 'student_answer_text',
-                  'is_correct', 'marks_obtained', 'time_spent_seconds', 'attempted',
-                  'marked_for_review', 'created_at', 'updated_at']
+        fields = ['id', 'attempt', 'question', 'question_id', 'selected_option', 'selected_option_id',
+                  'student_answer_text', 'is_correct', 'marks_obtained', 'time_spent_seconds',
+                  'attempted', 'marked_for_review', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 
@@ -186,30 +190,41 @@ class MockExamAttemptListSerializer(serializers.ModelSerializer):
         write_only=True,
         required=True
     )
+    started_at = serializers.DateTimeField(source='start_time', read_only=True)
     
     class Meta:
         model = MockExamAttempt
-        fields = ['id', 'mock_exam', 'mock_exam_title', 'start_time', 'end_time',
+        fields = ['id', 'mock_exam', 'mock_exam_title', 'start_time', 'started_at', 'end_time',
                   'status', 'obtained_marks', 'total_marks', 'percentage', 'grade',
                   'passed', 'time_spent_seconds']
-        read_only_fields = ['id', 'mock_exam_title', 'start_time', 'end_time', 'status', 
+        read_only_fields = ['id', 'mock_exam_title', 'start_time', 'started_at', 'end_time', 'status', 
                            'obtained_marks', 'percentage', 'grade', 'passed']
 
 
 class MockExamAttemptDetailSerializer(serializers.ModelSerializer):
     """Complete serializer with results"""
     mock_exam = CustomMockExamDetailSerializer(read_only=True)
+    custom_mock_exam = serializers.PrimaryKeyRelatedField(source='mock_exam', read_only=True)
+    started_at = serializers.DateTimeField(source='start_time', read_only=True)
     results = MockExamResultSerializer(many=True, read_only=True)
+    answers = serializers.SerializerMethodField()
     
     class Meta:
         model = MockExamAttempt
-        fields = ['id', 'user', 'mock_exam', 'start_time', 'end_time', 'time_spent_seconds',
-                  'status', 'is_submitted', 'total_marks', 'obtained_marks', 'percentage',
-                  'grade', 'passed', 'device_type', 'results',
-                  'created_at', 'updated_at']
-        read_only_fields = ['id', 'user', 'created_at', 'updated_at', 'start_time', 'end_time',
-                           'status', 'is_submitted', 'obtained_marks', 'percentage', 'grade', 
-                           'passed', 'device_type', 'results', 'time_spent_seconds']
+        fields = ['id', 'user', 'mock_exam', 'custom_mock_exam', 'start_time', 'started_at',
+                  'end_time', 'time_spent_seconds', 'status', 'is_submitted', 'total_marks',
+                  'obtained_marks', 'percentage', 'grade', 'passed', 'device_type', 'results',
+                  'answers', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'user', 'created_at', 'updated_at', 'start_time', 'started_at',
+                           'end_time', 'status', 'is_submitted', 'obtained_marks', 'percentage',
+                           'grade', 'passed', 'device_type', 'results', 'answers', 'time_spent_seconds']
+
+    def get_answers(self, obj):
+        ans = {}
+        for r in obj.results.all():
+            if r.selected_option_id:
+                ans[str(r.question_id)] = r.selected_option_id
+        return ans
 
 
 class MockExamActivityLogSerializer(serializers.ModelSerializer):
@@ -224,6 +239,8 @@ class MockExamActivityLogSerializer(serializers.ModelSerializer):
 
 
 class MockExamExternalPlatformSerializer(serializers.ModelSerializer):
+    api_endpoint = serializers.CharField(max_length=500, required=False, allow_blank=True)
+    
     class Meta:
         model = MockExamExternalPlatform
         fields = ['id', 'platform_name', 'platform_type', 'description', 'platform_url',
