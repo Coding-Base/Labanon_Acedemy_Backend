@@ -882,6 +882,13 @@ class VerifyPaymentView(APIView):
                 transaction_data = client.verify_payment(reference)
 
                 if transaction_data.get('status') == 'success':
+                    # Verify paid amount matches expected amount to prevent price tampering
+                    paid_kobo = transaction_data.get('amount', 0)
+                    expected_kobo = int(payment.amount * 100)
+                    if paid_kobo < expected_kobo:
+                        logger.critical(f"Payment amount mismatch for reference {reference}: expected {expected_kobo} kobo, got {paid_kobo} kobo")
+                        return Response({'detail': 'Payment amount verification failed: paid amount does not match expected amount.'}, status=status.HTTP_400_BAD_REQUEST)
+
                     # Only process if not already successful to avoid duplicates
                     if payment.status != Payment.SUCCESS:
                         with transaction.atomic():
@@ -1998,6 +2005,13 @@ class VerifyFlutterwavePaymentView(APIView):
                 transaction_data = client.verify_payment_by_reference(reference)
 
                 if transaction_data.get('status') == 'successful':
+                    # Verify paid amount matches expected amount to prevent price tampering
+                    tx_amount = float(transaction_data.get('amount', 0))
+                    expected_amount = float(payment.amount)
+                    if tx_amount < expected_amount:
+                        logger.critical(f"Flutterwave payment amount mismatch for reference {reference}: expected {expected_amount}, got {tx_amount}")
+                        return Response({'detail': 'Payment amount verification failed: paid amount does not match expected amount.'}, status=status.HTTP_400_BAD_REQUEST)
+
                     if payment.status != Payment.SUCCESS:
                         with transaction.atomic():
                             payment.status = Payment.SUCCESS
@@ -2161,12 +2175,12 @@ class FlutterwaveWebhookView(APIView):
     def post(self, request):
         try:
             body = request.body
-            signature = request.META.get('HTTP_X_FLUTTERWAVE_SIGNATURE', '')
+            signature = request.META.get('HTTP_VERIF_HASH') or request.META.get('HTTP_X_FLUTTERWAVE_SIGNATURE', '')
             
             # Verify webhook signature
-            if not FlutterwaveWebhookVerifier.verify_signature(body, signature) and not settings.DEBUG:
-                logger.warning("Invalid Flutterwave webhook signature")
-                # Don't fail - might be debug mode
+            if not FlutterwaveWebhookVerifier.verify_signature(body, signature):
+                logger.warning(f"Rejected invalid Flutterwave webhook signature from {request.META.get('REMOTE_ADDR')}")
+                return Response({'detail': 'Invalid signature'}, status=status.HTTP_403_FORBIDDEN)
             
             payload = request.data
             

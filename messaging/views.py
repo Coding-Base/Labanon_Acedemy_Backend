@@ -699,19 +699,22 @@ class UserSearchView(APIView):
             'id', 'username', 'email', 'first_name', 'last_name', 'role'
         )[:limit]
         
-        # Add display name
+        # Add display name - protect student & user email PII from unprivileged scraping
+        is_staff_or_admin = request.user.is_staff or getattr(request.user, 'role', '') == 'admin'
         result = []
         for user in users:
             display_name = user['first_name'] or user['username']
-            result.append({
+            user_data = {
                 'id': user['id'],
                 'username': user['username'],
-                'email': user['email'],
                 'first_name': user['first_name'],
                 'last_name': user['last_name'],
                 'role': user['role'],
                 'display_name': display_name
-            })
+            }
+            if is_staff_or_admin:
+                user_data['email'] = user['email']
+            result.append(user_data)
         
         return Response({'results': result})
 

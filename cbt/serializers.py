@@ -170,6 +170,14 @@ class ChoiceSerializer(serializers.ModelSerializer):
         """Format choice text with LaTeX when serializing"""
         data = super().to_representation(instance)
         data['text'] = format_math_text(data['text'])
+
+        # Security: Strip is_correct for students/unauthenticated users during exams
+        request = self.context.get('request')
+        user = getattr(request, 'user', None) if request else None
+        is_admin_or_staff = user and (getattr(user, 'is_staff', False) or getattr(user, 'role', '') == 'admin')
+        if not is_admin_or_staff and not self.context.get('show_correct_answers', False):
+            data.pop('is_correct', None)
+
         return data
 
 

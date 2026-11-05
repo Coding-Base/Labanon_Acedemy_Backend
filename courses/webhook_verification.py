@@ -225,18 +225,32 @@ class FlutterwaveWebhookVerifier:
     @staticmethod
     def verify_signature(body: bytes, signature: str) -> bool:
         """
-        Verify Flutterwave webhook signature.
-        
-        Args:
-            body: Raw request body (JSON string)
-            signature: Signature from x-flutterwave-signature header
-            
-        Returns:
-            True if signature is valid, False otherwise
+        Verify Flutterwave webhook signature securely.
+        Supports both verif-hash secret header and HMAC-SHA256 signature.
         """
-        flutterwave_secret = os.getenv('FLUTTERWAVE_SECRET_KEY') or settings.FLUTTERWAVE_SECRET_KEY
-        expected_signature = hashlib.sha256((body + flutterwave_secret).encode()).hexdigest()
-        return hmac.compare_digest(signature, expected_signature)
+        if not signature:
+            return False
+        
+        secret = os.getenv('FLUTTERWAVE_SECRET_KEY') or getattr(settings, 'FLUTTERWAVE_SECRET_KEY', None)
+        enc_key = os.getenv('FLUTTERWAVE_ENCRYPTION_KEY') or getattr(settings, 'FLUTTERWAVE_ENCRYPTION_KEY', None)
+        webhook_hash = os.getenv('FLUTTERWAVE_WEBHOOK_HASH')
+        
+        # 1. Compare against verif-hash secrets
+        for candidate in (secret, enc_key, webhook_hash):
+            if candidate and hmac.compare_digest(signature.strip(), candidate.strip()):
+                return True
+                
+        # 2. HMAC-SHA256 comparison if body is signed
+        if secret and body:
+            try:
+                body_bytes = body if isinstance(body, bytes) else str(body).encode('utf-8')
+                computed = hmac.new(secret.encode('utf-8'), body_bytes, hashlib.sha256).hexdigest()
+                if hmac.compare_digest(signature.strip(), computed):
+                    return True
+            except Exception:
+                pass
+                
+        return False
     
     @staticmethod
     def process_webhook(data: dict) -> dict:

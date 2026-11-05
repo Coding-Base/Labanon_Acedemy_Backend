@@ -358,19 +358,14 @@ class StudentMockExamViewSet(viewsets.ReadOnlyModelViewSet):
         except Exception:
             pass
 
-        # Check 2: User has any existing active ActivationUnlock record (CBT exams or mock exams)
-        if ActivationUnlock.objects.filter(user=user, is_active=True).exists():
-            return Response({
-                'unlocked': True,
-                'reason': 'existing_unlock',
-                'message': 'You have previously unlocked exams. Mock exams are free for you.'
-            }, status=status.HTTP_200_OK)
-        
-        # Check 2.5: User has specifically unlocked this mock exam
+        # Check 2: User has unlocked this specific mock exam or has global mock exam access
         mock_exam_unlock = ActivationUnlock.objects.filter(
             user=user,
-            exam_identifier=f"mock_exam_{exam.id}",
             is_active=True
+        ).filter(
+            Q(exam_identifier='all') |
+            Q(exam_identifier='all_mock_exams') |
+            Q(exam_identifier=f"mock_exam_{exam.id}")
         ).exists()
         if mock_exam_unlock:
             return Response({
@@ -400,10 +395,28 @@ class StudentMockExamViewSet(viewsets.ReadOnlyModelViewSet):
     
     @action(detail=True, methods=['post'])
     def unlock(self, request, pk=None):
-        """Unlock a mock exam for the student"""
+        """Unlock a mock exam for the student (validates payment or free status)"""
         exam = self.get_object()
         user = request.user
         
+        is_free = not hasattr(exam, 'fee') or exam.fee.fee_amount == 0
+        from courses.models import Payment
+        has_paid = Payment.objects.filter(
+            user=user,
+            status=Payment.SUCCESS,
+            kind=Payment.KIND_UNLOCK
+        ).filter(
+            Q(provider_reference__icontains=str(exam.id)) |
+            Q(provider_reference__icontains=f"mock_exam_{exam.id}")
+        ).exists()
+
+        if not (user.is_staff or is_free or has_paid):
+            return Response({
+                'status': 'error',
+                'unlocked': False,
+                'detail': 'Payment required to unlock this exam.'
+            }, status=status.HTTP_402_PAYMENT_REQUIRED)
+
         unlock_record, created = ActivationUnlock.objects.get_or_create(
             user=user,
             exam_identifier=f"mock_exam_{exam.id}",
