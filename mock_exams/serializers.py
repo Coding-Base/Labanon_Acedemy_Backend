@@ -255,14 +255,18 @@ class MockExamExternalPlatformSerializer(serializers.ModelSerializer):
 
 class MockExamActivityOverviewSerializer(serializers.Serializer):
     """Serializer for admin activity overview dashboard"""
+    total_exams = serializers.IntegerField(required=False)
     total_mock_exams = serializers.IntegerField()
     published_exams = serializers.IntegerField()
     draft_exams = serializers.IntegerField()
     total_students_attempted = serializers.IntegerField()
     total_attempts = serializers.IntegerField()
-    avg_completion_rate = serializers.DecimalField(max_digits=5, decimal_places=2)
-    avg_score = serializers.DecimalField(max_digits=5, decimal_places=2)
-    most_attempted_exam = serializers.CharField()
-    recent_attempts = MockExamAttemptListSerializer(many=True)
-    subject_wise_attempts = serializers.DictField()
-    hourly_attempts = serializers.ListField()  # For charts
+    average_completion_rate = serializers.FloatField(required=False)
+    avg_completion_rate = serializers.FloatField(required=False)
+    average_score = serializers.FloatField(required=False)
+    avg_score = serializers.FloatField(required=False)
+    most_attempted_exam = serializers.JSONField(allow_null=True, required=False)
+    recent_attempts = MockExamAttemptListSerializer(many=True, required=False)
+    recent_activities = serializers.ListField(required=False)
+    subject_wise_attempts = serializers.DictField(required=False)
+    hourly_attempts = serializers.ListField(required=False)

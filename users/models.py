@@ -10,6 +10,7 @@ class User(AbstractUser):
     INSTITUTION = 'institution'
     RESEARCHER = 'researcher'
     ADMIN = 'admin'
+    SUBADMIN = 'subadmin'
 
     ROLE_CHOICES = [
         (TUTOR, 'Tutor'),
@@ -17,6 +18,7 @@ class User(AbstractUser):
         (INSTITUTION, 'Institution'),
         (RESEARCHER, 'Researcher'),
         (ADMIN, 'Admin'),
+        (SUBADMIN, 'Subadmin'),
     ]
 
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default=STUDENT)

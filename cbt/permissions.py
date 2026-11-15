@@ -13,20 +13,24 @@ class CanManageExamLibrary(permissions.BasePermission):
         if not user or not user.is_authenticated:
             return False
 
-        if user.is_staff or user.is_superuser or user.role == User.ADMIN:
+        if user.is_superuser:
             return True
 
-        try:
-            profile = user.subadmin_profile
-        except Exception:
-            return False
+        # Check subadmin permissions strictly
+        if hasattr(user, 'subadmin_profile') or user.role == User.SUBADMIN:
+            try:
+                profile = user.subadmin_profile
+                if not profile.is_active:
+                    return False
+                configured = profile.permissions or {}
+                return bool(
+                    configured.get('can_manage_cbt')
+                    or configured.get('can_manage_exams')
+                    or configured.get('can_manage_exam_library')
+                    or profile.can_manage_cbt
+                )
+            except Exception:
+                return False
 
-        if not profile.is_active:
-            return False
-
-        configured = profile.permissions or {}
-        return bool(
-            configured.get('can_manage_cbt')
-            or configured.get('can_manage_exams')
-            or profile.can_manage_cbt
-        )
+        # Master admin
+        return bool(user.role == User.ADMIN)

@@ -41,7 +41,7 @@ class SubAdminViewSet(viewsets.ModelViewSet):
         
         try:
             # Create the User
-            user = User.objects.create_user(username=username, password=password, email=email, is_staff=True)
+            user = User.objects.create_user(username=username, password=password, email=email, role=User.SUBADMIN, is_staff=True)
             
             # Get permissions from request (either legacy boolean fields or new JSON format)
             permissions_data = request.data.get('permissions', {})
@@ -130,16 +130,31 @@ class SubAdminViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(subadmins, many=True)
         return Response(serializer.data)
 
+    def destroy(self, request, *args, **kwargs):
+        """Delete a sub-admin account and its associated User record atomically"""
+        instance = self.get_object()
+        if not request.user.is_superuser and instance.created_by != request.user:
+            return Response({'error': 'Unauthorized'}, status=status.HTTP_403_FORBIDDEN)
+        self.perform_destroy(instance)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    def perform_destroy(self, instance):
+        user = instance.user
+        instance.delete()
+        if user:
+            user.delete()
+
     @action(detail=True, methods=['delete'])
     def delete_subadmin(self, request, pk=None):
-        """Delete a sub-admin account"""
+        """Explicit delete action for sub-admin account"""
         subadmin = self.get_object()
-        if subadmin.created_by != request.user:
+        if not request.user.is_superuser and subadmin.created_by != request.user:
             return Response({'error': 'Unauthorized'}, status=status.HTTP_403_FORBIDDEN)
         
         user = subadmin.user
         subadmin.delete()
-        user.delete()
+        if user:
+            user.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     # Added Update method to fix permissions on existing accounts

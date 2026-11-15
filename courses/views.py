@@ -1266,12 +1266,14 @@ class TutorApplicationView(APIView):
 
 
 class TutorsLeaderboardView(APIView):
-    """Get tutors leaderboard based on course sales, enrollments, and performance, with drill-down support by tutor_id"""
+    """Get tutors leaderboard based on VERIFIED course sales, enrollments, and performance, with drill-down support by tutor_id.
+    Strictly excludes failed or pending payment transactions from revenue and sales metrics."""
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        from django.db.models import Count, Avg, Sum
+        from django.db.models import Count, Avg, Sum, Q
         from django.contrib.auth import get_user_model
+        from courses.models import Course, Payment, Enrollment, Review
         User = get_user_model()
 
         tutor_id = request.query_params.get('tutor_id')
@@ -1284,42 +1286,73 @@ class TutorsLeaderboardView(APIView):
             except User.DoesNotExist:
                 return Response({'detail': 'Tutor not found'}, status=status.HTTP_404_NOT_FOUND)
 
-            courses = Course.objects.filter(creator=tutor).annotate(
-                enrollments_count=Count('enrollments', distinct=True),
-                avg_rating=Avg('reviews__rating')
-            ).order_by('-enrollments_count')
+            courses = Course.objects.filter(creator=tutor)
 
-            total_enrollments = sum(c.enrollments_count for c in courses)
-            total_revenue = sum(
-                float(c.price or 0) * c.enrollments_count for c in courses
-            )
-
-            # Calculate rank among all tutors
-            all_tutors = User.objects.filter(role='tutor').annotate(
-                sales_count=Count('courses__enrollments', distinct=True),
-                c_count=Count('courses', distinct=True)
-            ).order_by('-sales_count', '-c_count')
-
-            tutor_rank = None
-            for idx, t in enumerate(all_tutors, 1):
-                if t.id == tutor.id:
-                    tutor_rank = idx
-                    break
+            # Revenue strictly from successful payments only (failed transactions excluded)
+            total_revenue = float(Payment.objects.filter(
+                course__in=courses,
+                status=Payment.SUCCESS
+            ).aggregate(total=Sum('amount'))['total'] or 0)
 
             courses_data = []
+            paid_course_students = set()
+            free_course_students = set()
+
             for c in courses:
+                is_free = (c.price or 0) <= 0
+                if is_free:
+                    enrollments_count = c.enrollments.count()
+                    course_rev = 0.0
+                    free_course_students.update(c.enrollments.values_list('user', flat=True))
+                else:
+                    # Only count verified purchases (purchased=True)
+                    enrollments_count = c.enrollments.filter(purchased=True).count()
+                    course_rev = float(Payment.objects.filter(
+                        course=c,
+                        status=Payment.SUCCESS
+                    ).aggregate(total=Sum('amount'))['total'] or 0)
+                    paid_course_students.update(
+                        c.enrollments.filter(purchased=True).values_list('user', flat=True)
+                    )
+
+                avg_c_rating = c.reviews.aggregate(avg=Avg('rating'))['avg']
+
                 courses_data.append({
                     'id': c.id,
                     'title': c.title,
                     'category': getattr(c.category, 'name', '') if hasattr(c, 'category') and c.category else '',
                     'price': float(c.price or 0),
-                    'enrollments_count': c.enrollments_count,
-                    'rating': round(float(c.avg_rating or 5.0), 1) if c.avg_rating else 5.0,
+                    'enrollments_count': enrollments_count,
+                    'rating': round(float(avg_c_rating or 5.0), 1) if avg_c_rating else 5.0,
                     'status': getattr(c, 'status', 'published'),
-                    'revenue': float(c.price or 0) * c.enrollments_count
+                    'revenue': course_rev
                 })
 
-            avg_rating = tutor.courses.aggregate(avg=Avg('reviews__rating'))['avg']
+            total_students_taught = len(paid_course_students.union(free_course_students))
+
+            # Calculate rank among all tutors based on successful revenue, then verified sales
+            all_tutors = User.objects.filter(role='tutor')
+            tutor_scores = []
+            for t in all_tutors:
+                t_rev = float(Payment.objects.filter(
+                    course__creator=t,
+                    status=Payment.SUCCESS
+                ).aggregate(total=Sum('amount'))['total'] or 0)
+                t_sales = Enrollment.objects.filter(
+                    course__creator=t,
+                    course__price__gt=0,
+                    purchased=True
+                ).count()
+                tutor_scores.append((t.id, t_rev, t_sales))
+
+            tutor_scores.sort(key=lambda x: (x[1], x[2]), reverse=True)
+            tutor_rank = None
+            for idx, (tid, _, _) in enumerate(tutor_scores, 1):
+                if tid == tutor.id:
+                    tutor_rank = idx
+                    break
+
+            avg_rating = Review.objects.filter(course__creator=tutor).aggregate(avg=Avg('rating'))['avg']
             full_name = f"{tutor.first_name} {tutor.last_name}".strip() or tutor.username
 
             return Response({
@@ -1328,49 +1361,68 @@ class TutorsLeaderboardView(APIView):
                 'username': tutor.username,
                 'email': tutor.email,
                 'rank': tutor_rank,
-                'total_tutors_ranked': all_tutors.count(),
+                'total_tutors_ranked': len(tutor_scores),
                 'total_courses': courses.count(),
-                'total_students_taught': total_enrollments,
+                'total_students_taught': total_students_taught,
                 'total_revenue': total_revenue,
                 'average_rating': round(float(avg_rating or 5.0), 1) if avg_rating else 5.0,
                 'metrics': {
                     'total_courses': courses.count(),
-                    'total_students_taught': total_enrollments,
+                    'total_students_taught': total_students_taught,
                     'total_revenue': total_revenue,
                     'average_rating': round(float(avg_rating or 5.0), 1) if avg_rating else 5.0,
                 },
                 'courses': courses_data
             })
 
-        # Global Tutors Leaderboard
-        tutors_stats = User.objects.filter(
-            role='tutor'
-        ).annotate(
-            total_enrollments=Count('courses__enrollments', distinct=True),
-            courses_count=Count('courses', distinct=True),
-            avg_rating=Avg('courses__reviews__rating')
-        ).order_by('-total_enrollments', '-courses_count')[:limit]
+        # Global Tutors Leaderboard (Strictly successful payments and verified enrollments only)
+        all_tutors = User.objects.filter(role='tutor')
 
         leaderboard_data = []
-        for idx, tutor in enumerate(tutors_stats, 1):
+        for tutor in all_tutors:
+            t_courses = tutor.courses.all()
+            courses_count = t_courses.count()
+            if courses_count == 0:
+                continue
+
+            rev = float(Payment.objects.filter(
+                course__in=t_courses,
+                status=Payment.SUCCESS
+            ).aggregate(total=Sum('amount'))['total'] or 0)
+
+            paid_students = set(Enrollment.objects.filter(
+                course__in=t_courses.filter(price__gt=0),
+                purchased=True
+            ).values_list('user', flat=True))
+
+            free_students = set(Enrollment.objects.filter(
+                course__in=t_courses.filter(Q(price__isnull=True) | Q(price=0))
+            ).values_list('user', flat=True))
+
+            students_taught = len(paid_students.union(free_students))
+            sales_count = len(paid_students)
+
+            avg_rating = Review.objects.filter(course__in=t_courses).aggregate(avg=Avg('rating'))['avg']
             full_name = f"{tutor.first_name} {tutor.last_name}".strip() or tutor.username
-            t_courses = tutor.courses.annotate(e_count=Count('enrollments', distinct=True))
-            rev = sum(float(c.price or 0) * c.e_count for c in t_courses)
+
             leaderboard_data.append({
-                'rank': idx,
                 'id': tutor.id,
                 'username': tutor.username,
                 'name': full_name,
                 'email': tutor.email,
-                'sales': tutor.total_enrollments or 0,
-                'students_taught': tutor.total_enrollments or 0,
-                'courses_created': tutor.courses_count or 0,
+                'sales': sales_count,
+                'students_taught': students_taught,
+                'courses_created': courses_count,
                 'total_revenue': rev,
-                'rating': round(float(tutor.avg_rating or 5.0), 1) if tutor.avg_rating else 5.0,
+                'rating': round(float(avg_rating or 5.0), 1) if avg_rating else 5.0,
                 'avatar_initial': full_name[0].upper() if full_name else 'T'
             })
 
-        return Response(leaderboard_data)
+        leaderboard_data.sort(key=lambda x: (x['total_revenue'], x['sales'], x['rating']), reverse=True)
+        for idx, item in enumerate(leaderboard_data, 1):
+            item['rank'] = idx
+
+        return Response(leaderboard_data[:limit])
 
 
 class GospelVideoViewSet(viewsets.ModelViewSet):

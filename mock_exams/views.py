@@ -1,4 +1,4 @@
-from rest_framework import viewsets, status, filters, serializers
+from rest_framework import viewsets, status, filters, serializers, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
@@ -26,6 +26,28 @@ from courses.models import ActivationUnlock
 
 
 logger = logging.getLogger(__name__)
+
+
+class CanManageMockExams(permissions.BasePermission):
+    """Allow master admins and sub-admins with mock exams / CBT permissions."""
+    def has_permission(self, request, view):
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+        if user.is_superuser:
+            return True
+        if hasattr(user, 'subadmin_profile') or getattr(user, 'role', '') == 'subadmin':
+            try:
+                profile = user.subadmin_profile
+                if not profile.is_active:
+                    return False
+                return bool(
+                    profile.has_permission('can_manage_mock_exams')
+                    or profile.has_permission('can_manage_cbt')
+                )
+            except Exception:
+                return False
+        return bool(getattr(user, 'role', '') == 'admin')
 
 
 class StandardPagination(PageNumberPagination):
@@ -153,7 +175,7 @@ class MasterAdminMockExamViewSet(viewsets.ModelViewSet):
         
         return Response({'status': 'exam archived'}, status=status.HTTP_200_OK)
     
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get'], permission_classes=[CanManageMockExams])
     def activity_overview(self, request):
         """Get admin dashboard overview with activity stats"""
         total_exams = CustomMockExam.objects.count()
@@ -165,19 +187,36 @@ class MasterAdminMockExamViewSet(viewsets.ModelViewSet):
         total_attempts = all_attempts.count()
         
         completed_attempts = all_attempts.filter(status='completed').count()
-        completion_rate = (completed_attempts / total_attempts * 100) if total_attempts > 0 else 0
+        completion_rate = round((completed_attempts / total_attempts * 100), 1) if total_attempts > 0 else 0.0
         
-        avg_score = all_attempts.filter(status='completed').aggregate(Avg('percentage'))['percentage__avg'] or 0
+        avg_score = round(all_attempts.filter(status='completed').aggregate(Avg('percentage'))['percentage__avg'] or 0.0, 1)
         
         # Most attempted exam
         most_attempted = CustomMockExam.objects.annotate(
             attempt_count=Count('attempts')
-        ).order_by('-attempt_count').first()
+        ).filter(attempt_count__gt=0).order_by('-attempt_count').first()
+
+        most_attempted_data = None
+        if most_attempted:
+            most_attempted_data = {
+                'id': most_attempted.id,
+                'title': most_attempted.title,
+                'total_attempts': most_attempted.attempt_count
+            }
         
         # Recent attempts
         recent_attempts = MockExamAttempt.objects.select_related(
             'user', 'mock_exam'
-        ).order_by('-start_time')[:5]
+        ).order_by('-start_time')[:10]
+
+        recent_activities_list = []
+        for att in recent_attempts:
+            status_text = "completed attempt on" if att.status == 'completed' else "started attempt on"
+            exam_title = att.mock_exam.title if att.mock_exam else "Mock Exam"
+            recent_activities_list.append({
+                'action': f"Student {att.user.username} {status_text} {exam_title}",
+                'timestamp': att.start_time.isoformat() if att.start_time else timezone.now().isoformat()
+            })
         
         # Subject-wise attempts
         subject_attempts_list = list(
@@ -187,15 +226,19 @@ class MasterAdminMockExamViewSet(viewsets.ModelViewSet):
         )
         
         data = {
+            'total_exams': total_exams,
             'total_mock_exams': total_exams,
             'published_exams': published_exams,
             'draft_exams': draft_exams,
             'total_students_attempted': total_students,
             'total_attempts': total_attempts,
+            'average_completion_rate': completion_rate,
             'avg_completion_rate': completion_rate,
+            'average_score': avg_score,
             'avg_score': avg_score,
-            'most_attempted_exam': most_attempted.title if most_attempted else None,
+            'most_attempted_exam': most_attempted_data,
             'recent_attempts': MockExamAttemptListSerializer(recent_attempts, many=True).data,
+            'recent_activities': recent_activities_list,
             'subject_wise_attempts': {'data': subject_attempts_list},
             'hourly_attempts': [],
         }
@@ -321,51 +364,38 @@ class StudentMockExamViewSet(viewsets.ReadOnlyModelViewSet):
     
     @action(detail=True, methods=['post', 'get'])
     def check_unlock_status(self, request, pk=None):
-        """Check if student needs to unlock the exam or can take it free"""
+        """
+        Check if student can access this mock exam.
+        STRICT PAY-AND-USE:
+        - If exam is free (fee <= 0 or not set), access is free.
+        - If exam is paid, strictly requires a one-time payment unlock for this specific mock exam.
+        - Previous CBT exam unlocks (is_unlocked / exam_identifier='all') DO NOT grant free access.
+        """
         exam = self.get_object()
         user = request.user
         
-        # Check 0: Admin / superuser bypass
-        if user.is_staff or user.is_superuser:
+        # Check 0: Superuser bypass (master admin testing only)
+        if user.is_superuser:
             return Response({
                 'unlocked': True,
                 'reason': 'admin_access',
-                'message': 'Admin access granted for mock exam'
+                'message': 'Master admin preview access'
             }, status=status.HTTP_200_OK)
 
-        # Check 1: User has global unlock (is_unlocked=True)
-        if getattr(user, 'is_unlocked', False):
+        # Check 1: Exam is free
+        is_free = not hasattr(exam, 'fee') or exam.fee.fee_amount <= 0
+        if is_free:
             return Response({
                 'unlocked': True,
-                'reason': 'global_unlock',
-                'message': 'You have full access to mock exams'
+                'reason': 'free_exam',
+                'message': 'This exam is free to take.'
             }, status=status.HTTP_200_OK)
-        
-        # Check 1.5: Active Pro subscription
-        try:
-            from courses.subscription_models import UserSubscription
-            sub = UserSubscription.objects.filter(
-                user=user,
-                status=UserSubscription.STATUS_ACTIVE,
-                end_date__gt=timezone.now()
-            ).select_related('plan').first()
-            if sub and (not sub.plan or sub.plan.allow_mock_exams):
-                return Response({
-                    'unlocked': True,
-                    'reason': 'pro_subscription',
-                    'message': 'Full access via your active Pro plan'
-                }, status=status.HTTP_200_OK)
-        except Exception:
-            pass
 
-        # Check 2: User has unlocked this specific mock exam or has global mock exam access
+        # Check 2: User has unlocked THIS SPECIFIC mock exam
         mock_exam_unlock = ActivationUnlock.objects.filter(
             user=user,
-            is_active=True
-        ).filter(
-            Q(exam_identifier='all') |
-            Q(exam_identifier='all_mock_exams') |
-            Q(exam_identifier=f"mock_exam_{exam.id}")
+            is_active=True,
+            exam_identifier=f"mock_exam_{exam.id}"
         ).exists()
         if mock_exam_unlock:
             return Response({
@@ -374,32 +404,24 @@ class StudentMockExamViewSet(viewsets.ReadOnlyModelViewSet):
                 'message': 'You have unlocked this mock exam.'
             }, status=status.HTTP_200_OK)
         
-        # Check 3: Exam is free
-        if not hasattr(exam, 'fee') or exam.fee.fee_amount == 0:
-            return Response({
-                'unlocked': True,
-                'reason': 'free_exam',
-                'message': 'This exam is free'
-            }, status=status.HTTP_200_OK)
-        
-        # Check 4: User needs to unlock (paid exam)
+        # Check 3: User needs to pay for this mock exam
         final_amt = float(exam.fee.get_final_amount())
         return Response({
             'unlocked': False,
             'reason': 'requires_payment',
             'fee_amount': float(exam.fee.fee_amount),
             'final_amount': final_amt,
-            'currency': exam.fee.currency,
-            'message': f"This exam requires unlock payment of {exam.fee.currency} {final_amt:.2f}"
+            'currency': exam.fee.currency or 'NGN',
+            'message': f"This exam requires a one-time unlock payment of {exam.fee.currency or 'NGN'} {final_amt:,.2f}"
         }, status=status.HTTP_200_OK)
     
     @action(detail=True, methods=['post'])
     def unlock(self, request, pk=None):
-        """Unlock a mock exam for the student (validates payment or free status)"""
+        """Unlock a mock exam for the student (validates verified payment or free status)"""
         exam = self.get_object()
         user = request.user
         
-        is_free = not hasattr(exam, 'fee') or exam.fee.fee_amount == 0
+        is_free = not hasattr(exam, 'fee') or exam.fee.fee_amount <= 0
         from courses.models import Payment
         has_paid = Payment.objects.filter(
             user=user,
@@ -410,7 +432,7 @@ class StudentMockExamViewSet(viewsets.ReadOnlyModelViewSet):
             Q(provider_reference__icontains=f"mock_exam_{exam.id}")
         ).exists()
 
-        if not (user.is_staff or is_free or has_paid):
+        if not (user.is_superuser or is_free or has_paid):
             return Response({
                 'status': 'error',
                 'unlocked': False,

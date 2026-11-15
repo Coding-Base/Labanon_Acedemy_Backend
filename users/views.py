@@ -199,15 +199,55 @@ class StandardResultsSetPagination(PageNumberPagination):
 
 
 class UserAdminViewSet(mixins.ListModelMixin, mixins.RetrieveModelMixin, mixins.DestroyModelMixin, mixins.UpdateModelMixin, viewsets.GenericViewSet):
-    """Admin user listing / detail / delete/update endpoints for master admin with search, filter and pagination."""
-    queryset = User.objects.all().order_by('-id')
+    """Admin user listing / detail / delete/update endpoints for master admin & permitted sub-admins."""
     serializer_class = UserSerializer
-    permission_classes = [IsMasterAdmin]
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['role']
     search_fields = ['username', 'email', 'first_name', 'last_name']
     ordering_fields = ['id', 'username', 'email']
+
+    def get_queryset(self):
+        qs = User.objects.all().order_by('-id')
+        role = self.request.query_params.get('role')
+        if role == 'student':
+            qs = qs.exclude(role=User.SUBADMIN).exclude(subadmin_profile__isnull=False)
+        return qs
+
+    def get_permissions(self):
+        return [permissions.IsAuthenticated()]
+
+    def check_permissions(self, request):
+        super().check_permissions(request)
+        user = request.user
+        if user.is_superuser:
+            return
+        if hasattr(user, 'subadmin_profile') or user.role == User.SUBADMIN:
+            profile = getattr(user, 'subadmin_profile', None)
+            if not profile or not profile.is_active:
+                self.permission_denied(request, message="Sub-admin account is inactive.")
+            role = request.query_params.get('role')
+            if role == 'student' and not (profile.has_permission('can_manage_students') or profile.has_permission('can_manage_users')):
+                self.permission_denied(request, message="You do not have permission to manage students.")
+            elif role == 'tutor' and not (profile.has_permission('can_manage_tutors') or profile.has_permission('can_manage_users')):
+                self.permission_denied(request, message="You do not have permission to manage tutors.")
+            elif role == 'institution' and not (profile.has_permission('can_manage_institutions') or profile.has_permission('can_manage_users')):
+                self.permission_denied(request, message="You do not have permission to manage institutions.")
+            elif role in ['admin', 'subadmin']:
+                self.permission_denied(request, message="Only Master Administrators can view or manage admins.")
+            elif not role and not profile.has_permission('can_manage_users'):
+                self.permission_denied(request, message="You do not have permission to manage users.")
+            return
+
+        if user.role != User.ADMIN:
+            self.permission_denied(request, message="Admin access required.")
+
+    def perform_destroy(self, instance):
+        if instance.is_superuser or instance.role == User.ADMIN or hasattr(instance, 'subadmin_profile') or instance.role == User.SUBADMIN:
+            if not self.request.user.is_superuser:
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied("Only Master Administrators can delete admin or sub-admin accounts.")
+        super().perform_destroy(instance)
     
     def get_serializer_class(self):
         """Return appropriate serializer based on user role"""
